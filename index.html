@@ -97,6 +97,7 @@
   .roleBtn{flex:1;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:8px 4px;cursor:pointer;text-align:center;transition:border-color .15s,transform .1s;}
   .roleBtn:active{transform:scale(.96);}
   .roleBtn.sel{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber) inset;}
+  .roleBtn.full{opacity:.38;}
   .roleBtn .remoji{font-size:20px;display:block;line-height:1.1;}
   .roleBtn .rnm{font-size:9px;font-weight:bold;display:block;margin-top:2px;}
 
@@ -182,6 +183,19 @@
   #wastedOverlay h1{color:var(--red);font-size:42px;letter-spacing:6px;margin:0;text-shadow:0 0 20px rgba(255,0,0,.6);}
   #wastedOverlay p{color:var(--text-dim);margin-top:6px;font-size:12px;}
   #wastedOverlay button{margin-top:18px;padding:10px 24px;background:var(--amber);border:none;border-radius:6px;font-weight:bold;cursor:pointer;}
+
+  #roundHud{
+    position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:16;display:none;
+    background:rgba(10,13,20,.82);border:1px solid var(--amber-dim);border-radius:6px;
+    padding:4px 12px;font-size:12px;font-weight:bold;color:var(--amber);letter-spacing:1px;
+  }
+  #resultOverlay{position:absolute;inset:0;background:rgba(5,7,11,.92);z-index:39;display:none;align-items:center;justify-content:center;padding:20px;}
+  #resultOverlay.show{display:flex;}
+  #resultBox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:24px;width:min(340px,88vw);text-align:center;}
+  #resultBox h1{color:var(--amber);font-size:28px;letter-spacing:3px;margin:0 0 14px;text-shadow:0 0 18px rgba(255,176,32,.4);}
+  #resultBoard{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
+  .resRow{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:8px 12px;font-size:13px;display:flex;justify-content:space-between;}
+  #nextRoundBtn{width:100%;padding:13px;border:none;border-radius:8px;background:linear-gradient(180deg,#ffc851,var(--amber));color:#1a1200;font-weight:bold;font-size:15px;letter-spacing:2px;cursor:pointer;}
 
   /* ---------- bottom controls (mobile touch) ---------- */
   #controls{
@@ -354,6 +368,16 @@
       <p id="wastedReason">Busted by the cops.</p>
       <button id="respawnBtn">RESPAWN</button>
     </div>
+
+    <div id="roundHud"></div>
+
+    <div id="resultOverlay">
+      <div id="resultBox">
+        <h1 id="resultTitle">COPS WIN</h1>
+        <div id="resultBoard"></div>
+        <button id="nextRoundBtn">▶ NEXT ROUND</button>
+      </div>
+    </div>
   </div>
 
   <div id="controls">
@@ -454,6 +478,7 @@ const ROLES = {
 };
 let roleKey = localStorage.getItem('cityheat_role') || 'runner';
 let gameMode = null; // 'solo' = classic single-player with NPCs (no login) | 'mp' = P2P manhunt (login)
+const QUOTAS = { runner:2, cop:3, truck:4, sport:4 }; // per-match role slots
 
 /* ---------------- WORLD / MAP GENERATION ---------------- */
 const TILE = 64;
@@ -720,10 +745,13 @@ document.querySelectorAll('.cityBtn').forEach(btn=>{
 });
 document.querySelectorAll('.roleBtn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
+    const r = btn.dataset.role;
+    if(gameMode==='mp' && r!==roleKey && roleFull(r)){ toast('FULL', ROLES[r].label+' is full — pick another role.'); return; }
     document.querySelectorAll('.roleBtn').forEach(b=>b.classList.remove('sel'));
     btn.classList.add('sel');
-    roleKey = btn.dataset.role;
+    roleKey = r;
     localStorage.setItem('cityheat_role', roleKey);
+    lobbyBroadcast(); updateRoleButtons(); // claim + refresh counts
   });
 });
 document.getElementById('startBtn').addEventListener('click', ()=>{
@@ -746,8 +774,15 @@ document.getElementById('restartBtn').addEventListener('click', ()=>{
   startGame(cityKey);
 });
 document.getElementById('respawnBtn').addEventListener('click', ()=>{
+  if(gameMode==='mp' && !roundOver){ toast('OUT','You are out — wait for the next round.'); return; } // caught = out until the round ends
   wastedOverlay.classList.remove('show');
   respawnPlayer();
+});
+document.getElementById('nextRoundBtn').addEventListener('click', ()=>{
+  wastedOverlay.classList.remove('show');
+  hideResults();
+  startRound();
+  if(!player.alive) respawnPlayer();
 });
 
 function togglePause(){
@@ -759,7 +794,7 @@ function togglePause(){
 function startGame(key){
   cityKey = key; city = CITIES[cityKey];
   document.getElementById('cityName').textContent = city.label;
-  if(gameMode==='mp') connectNet(); // P2P only in multiplayer
+  if(gameMode==='mp'){ connectNet(); if(round.endsAt <= Date.now()) startRound(); else broadcastRound(); } // start or join the round
   myScore = 0;
   genCity(cityKey);
   spawnWorld();
@@ -1550,6 +1585,14 @@ function update(dt){
 
   netSend(); // broadcast our transform to peers (throttled inside)
 
+  // MP match rounds: timer out -> runners survived; every runner down -> cops win
+  if(gameMode==='mp' && running && round.endsAt>0 && !roundOver){
+    const lr = livingRunners();
+    if(lr>0) roundHadRunner = true;
+    if(Date.now() >= round.endsAt) finishRound(lr>0 ? 'runners' : 'cops');
+    else if(roundHadRunner && lr===0) finishRound('cops');
+  }
+
   // cleanup dead
   if(Math.random()<0.02){
     peds = peds.filter(p=>p.alive || Math.random()<0.9); // keep some corpses briefly then thin out
@@ -1578,6 +1621,14 @@ function updateHud(){
   document.querySelectorAll('.star').forEach((s,i)=>{
     s.classList.toggle('on', i < Math.round(player.wanted));
   });
+  const rh = document.getElementById('roundHud');
+  if(rh){
+    if(gameMode==='mp' && round.endsAt>0 && !roundOver){
+      const rem = Math.max(0, Math.ceil((round.endsAt - Date.now())/1000));
+      rh.textContent = 'ROUND '+round.n+' · '+Math.floor(rem/60)+':'+String(rem%60).padStart(2,'0');
+      rh.style.display='block';
+    } else rh.style.display='none';
+  }
 }
 
 /* ---------------- RENDER ---------------- */
@@ -1945,7 +1996,7 @@ const SUPERADMIN_ADDRESS = '0xbfDe0eCEC5332Fd86D2570085571D6051Df098dA'; // demo
 // Embedding mnemonics in source is NEVER acceptable in a real app; in production a fallback server (GenosSRV) is the online superadmin.
 const DEMO_SUPERADMIN_MNEMONIC = 'panic now afford carbon donate lecture drift excite collect essay stuff prosper';
 const ARENA_DB = 'city-heat-arena'; // ONE shared DB: mnemonic identity doesn't carry across DB instances, so login lives here
-const AUTH = { db:null, ok:false, address:null, matchSub:null, govSub:null };
+const AUTH = { db:null, ok:false, address:null, matchSub:null, govSub:null, lobbyHb:null };
 
 // Governance: a merit ladder over career points, resolved by LAST-MATCH-WINS and signed
 // by an online superadmin (the engine runs only on their device — see governance.md).
@@ -1972,6 +2023,10 @@ function randomName(){ return NAMES[Math.floor(Math.random()*NAMES.length)]; }
 let MYNAME = localStorage.getItem('cityheat_name') || randomName();
 let myScore = 0; // self-authoritative: each player owns and broadcasts its own score
 let captureTimer = 0; // seconds the local runner has been surrounded by cops
+// Match rounds (MP): a round ends when the timer runs out (runners survived) or every runner is down (cops win).
+let round = { n:0, endsAt:0, winner:null };
+let roundOver = false, roundHadRunner = false;
+const ROUND_MS = 120000; // 2 minutes
 
 function killPoints(killerRole, victimRole){ // role-based bounty
   if(killerRole==='cop'    && victimRole==='runner') return 150; // cop takes down a runner
@@ -2000,16 +2055,26 @@ function connectNet(){
     NET.db = AUTH.db;
     NET.ch = NET.db.room.channel('p');
     NET.ch.on('message', (d,id)=>{
-      if(!d || typeof d.x!=='number') return;
+      if(!d) return;
+      if(d.lobby){ // lobby presence: role only (no position, not rendered) — feeds the quota counts
+        const p = NET.players[id] || (NET.players[id] = { color:netColor(id) });
+        p.role=d.r; p.name=d.n; if(p.al==null) p.al=1; p.last=performance.now();
+        updateRoleButtons();
+        return;
+      }
+      if(typeof d.x!=='number') return;
       let p = NET.players[id];
-      if(!p){ p = NET.players[id] = { rx:d.x, ry:d.y, ra:d.a||0, color:netColor(id), name:d.n }; toast('PLAYER JOINED', (d.n||'A rival')+' is loose in '+city.label); }
+      if(!p){ p = NET.players[id] = { color:netColor(id) }; toast('PLAYER JOINED', (d.n||'A rival')+' is loose in '+city.label); }
+      p.color = p.color || netColor(id);
       p.name=d.n||p.name; p.role=d.r||p.role; p.score=d.s; p.addr=d.ad||p.addr; p.tx=d.x; p.ty=d.y; p.ta=d.a||0; p.v=d.v; p.ct=d.ct; p.w=d.w; p.hp=d.hp; p.al=d.al; p.last=performance.now();
-      if(Math.hypot(p.rx-d.x,p.ry-d.y)>400){ p.rx=d.x; p.ry=d.y; p.ra=d.a||0; }
+      if(p.rx==null || Math.hypot(p.rx-d.x,p.ry-d.y)>400){ p.rx=d.x; p.ry=d.y; p.ra=d.a||0; } // seed/heal render position
     });
     NET.fire = NET.db.room.channel('f'); // discrete shot events
     NET.fire.on('message', (d,id)=> spawnRemoteShot(d,id));
     NET.kill = NET.db.room.channel('k'); // kill / scoreboard events
     NET.kill.on('message', d=> { if(d && d.capture) onCapture(d); else onKill(d); });
+    NET.round = NET.db.room.channel('rd'); // match round state (n, endsAt, winner)
+    NET.round.on('message', d=> onRoundMsg(d));
     NET.db.room.on('peer:leave', id=>{ if(NET.players[id]){ delete NET.players[id]; toast('PLAYER LEFT','A rival left the city'); updateNetTag(); } });
     NET.ready=true; updateNetTag();
   }catch(e){ console.warn('[net] connect failed', e); }
@@ -2072,6 +2137,66 @@ async function subscribeGovernance(){
 }
 function rankOf(addr){ return addr ? (RANKS[roleRanks[addr.toLowerCase()]] || null) : null; }
 
+/* ---- Role quotas (presence-based: counts from live peers, works for everyone) ---- */
+function countOthers(r){ // other players (lobby or in-game) currently holding role r
+  const now = performance.now(); let n = 0;
+  for(const id in NET.players){ const p = NET.players[id]; if(p.role===r && p.al!==0 && now-(p.last||0)<4000) n++; }
+  return n;
+}
+function roleFull(r){ return QUOTAS[r]!=null && countOthers(r) >= QUOTAS[r]; }
+function updateRoleButtons(){
+  if(gameMode!=='mp') return;
+  document.querySelectorAll('.roleBtn').forEach(btn=>{
+    const r = btn.dataset.role, rn = btn.querySelector('.rnm');
+    if(QUOTAS[r]!=null && rn) rn.textContent = ROLES[r].label+' '+(countOthers(r)+(roleKey===r?1:0))+'/'+QUOTAS[r];
+    btn.classList.toggle('full', roleFull(r) && r!==roleKey);
+  });
+}
+function lobbyBroadcast(){ // announce my chosen role while in the lobby (before the game starts)
+  if(gameMode!=='mp' || !NET.ready || running) return; // in-game presence is handled by netSend
+  NET.ch.send({ lobby:1, r:roleKey, n:MYNAME });
+}
+
+/* ---- Match rounds (channel-synced, works for everyone) ---- */
+function livingRunners(){ // in-game runners still alive (lobby entries have no rx)
+  const now = performance.now(); let n = (roleKey==='runner' && player.alive) ? 1 : 0;
+  for(const id in NET.players){ const p=NET.players[id]; if(p.rx!=null && p.role==='runner' && p.al!==0 && now-(p.last||0)<4000) n++; }
+  return n;
+}
+function broadcastRound(){ if(NET.ready && NET.round) NET.round.send({ n:round.n, endsAt:round.endsAt, winner:round.winner }); }
+function startRound(){
+  round.n += 1; round.endsAt = Date.now() + ROUND_MS; round.winner = null;
+  roundOver = false; roundHadRunner = false; hideResults();
+  broadcastRound();
+}
+function onRoundMsg(d){
+  if(!d || d.n==null) return;
+  if(d.n > round.n){                                   // a newer round started elsewhere → join it
+    round.n = d.n; round.endsAt = d.endsAt; round.winner = d.winner||null;
+    roundOver = !!round.winner; roundHadRunner = false; hideResults();
+    if(running && !player.alive) respawnPlayer();
+    if(round.winner) showResults(round.winner);
+  } else if(d.n===round.n && d.winner && !round.winner){ // this round just ended elsewhere
+    round.winner = d.winner; round.endsAt = d.endsAt; roundOver = true; showResults(d.winner);
+  }
+}
+function finishRound(winner){
+  if(roundOver) return;
+  round.winner = winner; round.endsAt = Date.now(); roundOver = true;
+  broadcastRound(); showResults(winner);
+}
+function showResults(winner){
+  const ov = document.getElementById('resultOverlay'); if(!ov) return;
+  document.getElementById('resultTitle').textContent = winner==='cops' ? '🚔 COPS WIN' : '🏃 RUNNERS SURVIVE';
+  const board = document.getElementById('resultBoard'); board.innerHTML='';
+  const rows = [{ name:MYNAME, role:roleKey, score:Math.round(myScore) }];
+  for(const id in NET.players){ const p=NET.players[id]; if(p.rx!=null) rows.push({ name:p.name||id.slice(0,4), role:p.role, score:p.score||0 }); }
+  rows.sort((a,b)=>(b.score||0)-(a.score||0));
+  for(const r of rows){ const d=document.createElement('div'); d.className='resRow'; d.textContent=(ROLES[r.role]?ROLES[r.role].emoji:'')+' '+r.name+' — '+(r.score||0); board.appendChild(d); }
+  ov.classList.add('show');
+}
+function hideResults(){ const ov=document.getElementById('resultOverlay'); if(ov) ov.classList.remove('show'); }
+
 function onSecurity(state){
   AUTH.ok = !!state.isActive;
   AUTH.address = state.activeAddress || null;
@@ -2081,6 +2206,7 @@ function onSecurity(state){
     if(!localStorage.getItem('cityheat_name')){ MYNAME = AUTH.db.sm.abbrAddr(state.activeAddress); const pn=$id('playerName'); if(pn) pn.value=MYNAME; }
     subscribeMatch();
     subscribeGovernance();
+    if(gameMode==='mp'){ connectNet(); if(!AUTH.lobbyHb) AUTH.lobbyHb = setInterval(lobbyBroadcast, 1500); updateRoleButtons(); } // join early for the lobby roster/quotas
   } else {
     overlay && overlay.classList.remove('hidden'); // login is mandatory
   }
