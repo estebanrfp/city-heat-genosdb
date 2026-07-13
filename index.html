@@ -1448,12 +1448,29 @@ function update(dt){
   updatePlayer(dt);
   if(!player.inVehicle) updateNearestCar();
 
-  // role scoring: runners earn while alive — more the more cops are hunting nearby (evasion, not camping)
+  // role scoring + surround/capture: runners earn while evading; 3 cops within 140px for 4s = busted
   if(roleKey==='runner' && player.alive){
-    let hunters = 0;
-    for(const id in NET.players){ const p=NET.players[id]; if(p.al!==0 && p.role==='cop' && p.rx!=null && Math.hypot(p.rx-player.x,p.ry-player.y)<600) hunters++; }
-    myScore += (0.5 + hunters*3) * dt;
-  }
+    let hunters = 0; const closers = [];
+    for(const id in NET.players){
+      const p = NET.players[id];
+      if(p.al===0 || p.role!=='cop' || p.rx==null) continue;
+      const d = Math.hypot(p.rx-player.x, p.ry-player.y);
+      if(d<600) hunters++;
+      if(d<140 && p.name) closers.push(p.name);
+    }
+    myScore += (0.5 + hunters*3) * dt; // evasion reward
+    if(closers.length>=3){
+      if(captureTimer===0) toast('⚠ SURROUNDED', 'Break free before they box you in!');
+      captureTimer += dt;
+    } else captureTimer = Math.max(0, captureTimer - dt*2); // slip away and it cools off
+    if(captureTimer>=4){
+      captureTimer = 0; player.alive = false;
+      const ev = { capture:true, captured:MYNAME, cops:[...new Set(closers)] };
+      if(NET.ready && NET.kill) NET.kill.send(ev);
+      onCapture(ev);
+      onWasted('Surrounded and busted by the cops!');
+    }
+  } else captureTimer = 0;
 
   for(const c of cars){
     if(c.driver==='player'){ /* handled in updatePlayer */ }
@@ -1535,6 +1552,13 @@ function render(){
   drawWeatherFx(camX,camY,w,h);
 
   gctx.restore();
+
+  if(captureTimer>0){ // pulsing red "surrounded" vignette while cops box the runner in
+    const a = Math.min(0.55, captureTimer/4*0.55) * (0.55 + 0.45*Math.sin(performance.now()/110));
+    const grad = gctx.createRadialGradient(w/2,h/2,Math.min(w,h)*0.28, w/2,h/2,Math.max(w,h)*0.62);
+    grad.addColorStop(0,'rgba(255,20,20,0)'); grad.addColorStop(1,'rgba(255,20,20,'+Math.max(0,a)+')');
+    gctx.fillStyle=grad; gctx.fillRect(0,0,w,h);
+  }
 
   drawMinimap();
 }
@@ -1857,6 +1881,7 @@ const NAMES = ['Viper','Ghost','Reaper','Nitro','Blaze','Shadow','Rico','Diesel'
 function randomName(){ return NAMES[Math.floor(Math.random()*NAMES.length)]; }
 let MYNAME = localStorage.getItem('cityheat_name') || randomName();
 let myScore = 0; // self-authoritative: each player owns and broadcasts its own score
+let captureTimer = 0; // seconds the local runner has been surrounded by cops
 
 function killPoints(killerRole, victimRole){ // role-based bounty
   if(killerRole==='cop'    && victimRole==='runner') return 150; // cop takes down a runner
@@ -1868,6 +1893,13 @@ function onKill(d){ // kill feed + award points to the killer (you score your ow
   if(!d || !d.victim) return;
   toast('KILL', (d.killer||'?')+' wasted '+d.victim);
   if(d.killer===MYNAME) myScore += killPoints(d.killerRole, d.victimRole);
+  renderPeerPanel();
+}
+
+function onCapture(d){ // a runner was surrounded and busted; the nearby cops split the bounty
+  if(!d || !d.captured) return;
+  toast('BUSTED', d.captured+' was captured!');
+  if(d.cops && d.cops.includes(MYNAME)) myScore += 120;
   renderPeerPanel();
 }
 
@@ -1891,7 +1923,7 @@ async function connectNet(){
     NET.fire = NET.db.room.channel('f'); // discrete shot events
     NET.fire.on('message', (d,id)=> spawnRemoteShot(d,id));
     NET.kill = NET.db.room.channel('k'); // kill / scoreboard events
-    NET.kill.on('message', d=> onKill(d));
+    NET.kill.on('message', d=> { if(d && d.capture) onCapture(d); else onKill(d); });
     NET.db.room.on('peer:leave', id=>{ if(NET.players[id]){ delete NET.players[id]; toast('PLAYER LEFT','A rival left the city'); updateNetTag(); } });
     NET.ready=true; updateNetTag();
   }catch(e){ console.warn('[net] connect failed', e); }
