@@ -117,6 +117,21 @@
   #centerPrompt.show{display:block;}
   #centerPrompt b{color:var(--amber);}
 
+  #loginOverlay{
+    position:absolute;inset:0;background:rgba(5,7,11,.97);z-index:50;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  #loginOverlay.hidden{display:none;}
+  #loginBox{max-width:420px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:22px;text-align:center;}
+  #loginBox h1{margin:0 0 4px;color:var(--amber);font-size:26px;letter-spacing:3px;}
+  #mnemonicBox{width:100%;resize:none;margin:14px 0 8px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);font-family:inherit;font-size:12px;}
+  #mnemonicBox:focus{outline:none;border-color:var(--amber);}
+  .loginWarn{font-size:11px;color:var(--amber);background:rgba(255,176,32,.1);border:1px solid var(--amber-dim);border-radius:6px;padding:8px;margin-bottom:8px;text-align:left;}
+  .loginBtn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:8px;background:linear-gradient(180deg,#ffc851,var(--amber));color:#1a1200;font-weight:bold;font-size:14px;letter-spacing:1px;cursor:pointer;}
+  .loginBtn.ghost{background:var(--panel-2);color:var(--text);border:1px solid var(--line);}
+  .loginBtn.hidden,.loginWarn.hidden{display:none;}
+  .loginFoot{font-size:10px;color:var(--text-dim);margin-top:14px;line-height:1.5;}
+
   #introOverlay{
     position:absolute;inset:0;background:rgba(5,7,11,.94);z-index:40;
     display:flex;align-items:center;justify-content:center;padding:20px;
@@ -248,6 +263,21 @@
       <div class="wpnDot active" data-w="0">👊</div>
       <div class="wpnDot" data-w="1">🔫</div>
       <div class="wpnDot" data-w="2">💣</div>
+    </div>
+
+    <div id="loginOverlay">
+      <div id="loginBox">
+        <h1>CITY HEAT</h1>
+        <div class="sub">SIGN IN TO PLAY · secured by GenosDB</div>
+        <textarea id="mnemonicBox" rows="2" placeholder="Paste your recovery phrase to log in…" autocomplete="off" spellcheck="false"></textarea>
+        <div id="mnemonicWarn" class="loginWarn hidden">⚠ Save this recovery phrase — it is the only way back into your account.</div>
+        <button id="btnPasskeyLogin" class="loginBtn hidden">🔑 Log in with Passkey</button>
+        <button id="btnMnemonicLogin" class="loginBtn">↩ Log in with recovery phrase</button>
+        <button id="btnGenerate" class="loginBtn ghost">✨ Create new identity</button>
+        <button id="btnProtect" class="loginBtn hidden">🔐 Protect with Passkey — stay signed in</button>
+        <button id="btnCopyMnemonic" class="loginBtn ghost hidden">📋 Copy phrase</button>
+        <div class="loginFoot">Your identity is a cryptographic key on this device. Every move is signed — no server, no passwords.</div>
+      </div>
     </div>
 
     <div id="introOverlay">
@@ -663,11 +693,7 @@ const wastedOverlay = document.getElementById('wastedOverlay');
 let paused = false, running = false;
 
 document.querySelectorAll('.cityBtn').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.cityBtn').forEach(b=>b.classList.remove('sel'));
-    btn.classList.add('sel');
-    cityKey = btn.dataset.city;
-  });
+  btn.addEventListener('click', ()=> setArenaCity(btn.dataset.city, true)); // sets the shared match map
 });
 document.querySelectorAll('.roleBtn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
@@ -681,6 +707,7 @@ document.getElementById('startBtn').addEventListener('click', ()=>{
   const nm=document.getElementById('playerName').value.trim();
   MYNAME = (nm || MYNAME).slice(0,12);
   localStorage.setItem('cityheat_name', MYNAME);
+  if(!AUTH.ok){ document.getElementById('loginOverlay').classList.remove('hidden'); return; } // signed in already (login is first)
   introOverlay.classList.add('hidden');
   startGame(cityKey);
 });
@@ -1872,6 +1899,14 @@ const NET = { gdb:null, db:null, ch:null, fire:null, kill:null, name:null, ready
 const NET_ROOM = (location.hash.slice(1) || 'lobby').replace(/[^a-z0-9-]/gi,'').slice(0,24) || 'lobby';
 const NET_CDN = "https://cdn.jsdelivr.net/npm/genosdb@latest/dist/index.min.js";
 
+/* ---------------- IDENTITY / ARENA (Security Manager) ----------------
+   One shared arena DB, created at load with the SM enabled. Login is mandatory
+   and happens BEFORE the game; every operation is then signed by the player's
+   key (anti-cheat). The arena's map is fixed by the URL hash (#chicago, #dubai). */
+const SUPERADMIN_ADDRESS = '0xbfDe0eCEC5332Fd86D2570085571D6051Df098dA'; // demo superadmin (public throwaway address — swap for a real one)
+const ARENA_DB = 'city-heat-arena'; // ONE shared DB: mnemonic identity doesn't carry across DB instances, so login lives here
+const AUTH = { db:null, ok:false, address:null, matchSub:null };
+
 function netColor(id){
   let h=0; for(let i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))>>>0;
   return 'hsl('+(h%360)+' 85% 62%)';
@@ -1903,15 +1938,11 @@ function onCapture(d){ // a runner was surrounded and busted; the nearby cops sp
   renderPeerPanel();
 }
 
-async function connectNet(){
-  const want = 'ch-'+cityKey+'-'+NET_ROOM; // room encodes the city (deterministic map)
-  if(NET.name===want && NET.ready) return;
+function connectNet(){
+  if(NET.ready || !AUTH.db) return; // the arena DB (with SM) is created at load; reuse it
   try{
-    if(!NET.gdb){ NET.gdb = (await import(NET_CDN)).gdb; }
-    if(NET.db && NET.db.room){ try{ NET.db.room.leave(); }catch(_){} }
-    NET.ready=false; NET.players=Object.create(null);
-    NET.db = await NET.gdb(want, { rtc:true });
-    NET.name = want;
+    NET.players=Object.create(null);
+    NET.db = AUTH.db;
     NET.ch = NET.db.room.channel('p');
     NET.ch.on('message', (d,id)=>{
       if(!d || typeof d.x!=='number') return;
@@ -1927,6 +1958,77 @@ async function connectNet(){
     NET.db.room.on('peer:leave', id=>{ if(NET.players[id]){ delete NET.players[id]; toast('PLAYER LEFT','A rival left the city'); updateNetTag(); } });
     NET.ready=true; updateNetTag();
   }catch(e){ console.warn('[net] connect failed', e); }
+}
+
+/* ---------------- LOGIN (Security Manager) ---------------- */
+const $id = id => document.getElementById(id);
+
+async function bootAuth(){ // create the ONE SM-enabled arena DB and drive the mandatory login (idempotent)
+  if(AUTH.db) return true;
+  try{
+    NET.gdb = NET.gdb || (await import(NET_CDN)).gdb;
+    AUTH.db = await NET.gdb(ARENA_DB, { rtc:true, sm:{ superAdmins:[SUPERADMIN_ADDRESS] } });
+    AUTH.db.sm.setSecurityStateChangeCallback(onSecurity); // single source of truth for the login UI
+    refreshLoginUI();
+    return true;
+  }catch(e){ console.warn('[auth] init failed', e); return false; }
+}
+
+/* City = shared match state, so every player renders the same map (one DB, one room). */
+function setArenaCity(c, broadcast){
+  if(!CITIES[c] || c===cityKey) { if(broadcast && AUTH.ok) AUTH.db.put({ city:c }, 'match').catch(()=>{}); return; }
+  cityKey = c; city = CITIES[c];
+  document.querySelectorAll('.cityBtn').forEach(b=>b.classList.toggle('sel', b.dataset.city===c));
+  document.getElementById('cityName').textContent = city.label;
+  if(!running) genCity(cityKey);
+  if(broadcast && AUTH.ok) AUTH.db.put({ city:c }, 'match').catch(()=>{});
+}
+async function subscribeMatch(){
+  if(AUTH.matchSub || !AUTH.db) return;
+  const { unsubscribe } = await AUTH.db.get('match', node=>{
+    const c = node && node.value && node.value.city;
+    if(c && CITIES[c] && c!==cityKey && !running) setArenaCity(c, false);
+  });
+  AUTH.matchSub = unsubscribe;
+}
+
+function onSecurity(state){
+  AUTH.ok = !!state.isActive;
+  AUTH.address = state.activeAddress || null;
+  const overlay = $id('loginOverlay');
+  if(state.isActive){                      // signed in (incl. silent WebAuthn resume) → reveal the intro/lobby
+    overlay && overlay.classList.add('hidden');
+    if(!localStorage.getItem('cityheat_name')){ MYNAME = AUTH.db.sm.abbrAddr(state.activeAddress); const pn=$id('playerName'); if(pn) pn.value=MYNAME; }
+    subscribeMatch();
+  } else {
+    overlay && overlay.classList.remove('hidden'); // login is mandatory
+  }
+  refreshLoginUI(state);
+}
+
+function refreshLoginUI(state){
+  const has = state ? state.hasWebAuthnHardwareRegistration : (AUTH.db && AUTH.db.sm.hasExistingWebAuthnRegistration());
+  const pk = $id('btnPasskeyLogin'); if(pk) pk.classList.toggle('hidden', !has);
+}
+
+function wireLogin(){
+  const mb = $id('mnemonicBox');
+  $id('btnGenerate').onclick = async ()=>{
+    const idn = await AUTH.db.sm.startNewUserRegistration();
+    if(!idn) return;
+    mb.value = idn.mnemonic; mb.readOnly = true;
+    $id('mnemonicWarn').classList.remove('hidden');
+    $id('btnGenerate').classList.add('hidden');
+    $id('btnCopyMnemonic').classList.remove('hidden');
+    $id('btnProtect').classList.remove('hidden');   // recommended: passkey => stay signed in
+  };
+  $id('btnMnemonicLogin').onclick = async ()=>{
+    const m = mb.value.trim(); if(!m){ toast('LOGIN','Paste a recovery phrase, or create a new identity.'); return; }
+    try{ await AUTH.db.sm.loginOrRecoverUserWithMnemonic(m); }catch(e){ toast('LOGIN', e.message||'Invalid recovery phrase'); }
+  };
+  $id('btnPasskeyLogin').onclick = async ()=>{ try{ await AUTH.db.sm.loginCurrentUserWithWebAuthn(); }catch(e){ toast('PASSKEY', e.message||'Passkey login failed'); } };
+  $id('btnProtect').onclick = async ()=>{ try{ await AUTH.db.sm.protectCurrentIdentityWithWebAuthn(); }catch(e){ toast('PASSKEY', e.message||'Passkey setup failed'); } };
+  $id('btnCopyMnemonic').onclick = ()=>{ navigator.clipboard && navigator.clipboard.writeText(mb.value); toast('COPIED','Recovery phrase copied — keep it safe.'); };
 }
 
 function netSend(){
@@ -2031,6 +2133,10 @@ resize();
 genCity(cityKey);
 document.getElementById('playerName').value = MYNAME;
 document.querySelectorAll('.roleBtn').forEach(b=>b.classList.toggle('sel', b.dataset.role===roleKey));
+document.getElementById('cityName').textContent = city.label;
+document.querySelectorAll('.cityBtn').forEach(b=>b.classList.toggle('sel', b.dataset.city===cityKey));
+wireLogin();
+bootAuth(); // create the ONE SM arena DB and drive the mandatory login (shown until signed in)
 
 })();
 </script>
