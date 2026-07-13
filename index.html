@@ -90,6 +90,14 @@
   }
   .nameInput:focus{outline:none;border-color:var(--amber);}
 
+  .pickLabel{font-size:9px;color:var(--text-dim);letter-spacing:2px;margin-top:10px;text-align:left;}
+  .rolePick{display:flex;gap:6px;justify-content:center;margin:6px 0 4px;}
+  .roleBtn{flex:1;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:8px 4px;cursor:pointer;text-align:center;transition:border-color .15s,transform .1s;}
+  .roleBtn:active{transform:scale(.96);}
+  .roleBtn.sel{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber) inset;}
+  .roleBtn .remoji{font-size:20px;display:block;line-height:1.1;}
+  .roleBtn .rnm{font-size:9px;font-weight:bold;display:block;margin-top:2px;}
+
   #missionToast{
     position:absolute;top:14px;left:50%;transform:translateX(-50%) translateY(-140%);
     background:rgba(10,13,20,.92);border:1px solid var(--amber-dim);
@@ -264,6 +272,13 @@
             <div class="desc">Wide highways, desert glow, sand</div>
           </div>
         </div>
+        <div class="pickLabel">CHOOSE YOUR ROLE</div>
+        <div class="rolePick">
+          <div class="roleBtn sel" data-role="runner"><span class="remoji">🏃</span><span class="rnm">RUNNER</span></div>
+          <div class="roleBtn" data-role="cop"><span class="remoji">🚔</span><span class="rnm">COP</span></div>
+          <div class="roleBtn" data-role="truck"><span class="remoji">🚚</span><span class="rnm">TRUCK</span></div>
+          <div class="roleBtn" data-role="sport"><span class="remoji">🏎️</span><span class="rnm">SPORT</span></div>
+        </div>
         <button id="startBtn">START ENGINE</button>
         <div id="controlsHint">
           <b>Move:</b> WASD / Arrows / left stick&nbsp;&nbsp; <b>Handbrake:</b> Space / hold stick center<br>
@@ -375,6 +390,17 @@ const CITIES = {
 
 let cityKey = 'curitiba';
 let city = CITIES[cityKey];
+
+/* ---------------- ROLES (multiplayer classes) ----------------
+   Each joining player embodies a role instead of syncing NPC traffic.
+   car = index into CAR_TYPES (-1 = on foot). */
+const ROLES = {
+  runner: { label:'RUNNER', emoji:'🏃', car:-1, onFoot:true,  weapon:1 },
+  cop:    { label:'COP',    emoji:'🚔', car:4,  onFoot:false, weapon:1 },
+  truck:  { label:'TRUCK',  emoji:'🚚', car:2,  onFoot:false, weapon:0 },
+  sport:  { label:'SPORT',  emoji:'🏎️', car:1,  onFoot:false, weapon:1 },
+};
+let roleKey = localStorage.getItem('cityheat_role') || 'runner';
 
 /* ---------------- WORLD / MAP GENERATION ---------------- */
 const TILE = 64;
@@ -643,6 +669,14 @@ document.querySelectorAll('.cityBtn').forEach(btn=>{
     cityKey = btn.dataset.city;
   });
 });
+document.querySelectorAll('.roleBtn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.roleBtn').forEach(b=>b.classList.remove('sel'));
+    btn.classList.add('sel');
+    roleKey = btn.dataset.role;
+    localStorage.setItem('cityheat_role', roleKey);
+  });
+});
 document.getElementById('startBtn').addEventListener('click', ()=>{
   const nm=document.getElementById('playerName').value.trim();
   MYNAME = (nm || MYNAME).slice(0,12);
@@ -726,6 +760,18 @@ function findSidewalkSpawn(){
   return {x:world.w/2, y:world.h/2};
 }
 
+function applyRole(){ // put the player into their chosen role's vehicle (or on foot)
+  const r = ROLES[roleKey] || ROLES.runner;
+  player.weapon = r.weapon; setWeapon(r.weapon);
+  if(player.inVehicle){ player.inVehicle.driver=null; player.inVehicle=null; }
+  if(!r.onFoot){
+    const car = makeCar(player.x, player.y, player.angle, CAR_TYPES[r.car], null);
+    car.driver = 'player';
+    cars.push(car);
+    player.inVehicle = car;
+  }
+}
+
 function spawnWorld(){
   cars = []; peds = []; cops = []; bullets = []; particles = []; pickups=[]; explosions=[];
   player.hp = player.maxHp; player.armor = 20; player.cash = 0;
@@ -734,6 +780,7 @@ function spawnWorld(){
 
   const spawn = findRoadSpawn();
   player.x = spawn.x; player.y = spawn.y; player.angle = 0;
+  applyRole();
 
   // traffic cars
   const carCount = 16;
@@ -771,6 +818,7 @@ function respawnPlayer(){
   player.alive = true; player.invuln = 2;
   player.inVehicle = null;
   player.wanted = Math.max(0, player.wanted-2);
+  applyRole();
 }
 
 /* ---------------- ENTER / EXIT VEHICLE ---------------- */
@@ -1833,7 +1881,7 @@ async function connectNet(){
       if(!d || typeof d.x!=='number') return;
       let p = NET.players[id];
       if(!p){ p = NET.players[id] = { rx:d.x, ry:d.y, ra:d.a||0, color:netColor(id), name:d.n }; toast('PLAYER JOINED', (d.n||'A rival')+' is loose in '+city.label); }
-      p.name=d.n||p.name; p.tx=d.x; p.ty=d.y; p.ta=d.a||0; p.v=d.v; p.ct=d.ct; p.w=d.w; p.hp=d.hp; p.al=d.al; p.last=performance.now();
+      p.name=d.n||p.name; p.role=d.r||p.role; p.tx=d.x; p.ty=d.y; p.ta=d.a||0; p.v=d.v; p.ct=d.ct; p.w=d.w; p.hp=d.hp; p.al=d.al; p.last=performance.now();
       if(Math.hypot(p.rx-d.x,p.ry-d.y)>400){ p.rx=d.x; p.ry=d.y; p.ra=d.a||0; }
     });
     NET.fire = NET.db.room.channel('f'); // discrete shot events
@@ -1855,7 +1903,7 @@ function netSend(){
     x: Math.round(player.x), y: Math.round(player.y),
     a: +aimAngle().toFixed(2), // aim direction (car heading when driving, pointer when on foot)
     v: inV?1:0, ct: inV?CAR_TYPES.indexOf(inV.type):-1,
-    w: player.weapon, hp: Math.round(player.hp), al: player.alive?1:0, n: MYNAME
+    w: player.weapon, hp: Math.round(player.hp), al: player.alive?1:0, n: MYNAME, r: roleKey
   });
   for(const id in NET.players){ if(now-(NET.players[id].last||0)>3500) delete NET.players[id]; }
   updateNetTag();
@@ -1912,15 +1960,16 @@ function renderPeerPanel(){ // right-side list of connected players (self + peer
   const panel = document.getElementById('peerPanel');
   if(!panel) return;
   if(!NET.ready || !running){ panel.innerHTML=''; return; }
-  const rows = [{ name:MYNAME, color:city.accent, v:player.inVehicle?1:0, hp:Math.round(player.hp), al:player.alive?1:0, self:true }];
-  for(const id in NET.players){ const p=NET.players[id]; rows.push({ name:p.name||id.slice(0,4), color:p.color, v:p.v, hp:p.hp, al:p.al }); }
+  const rows = [{ name:MYNAME, color:city.accent, v:player.inVehicle?1:0, hp:Math.round(player.hp), al:player.alive?1:0, role:roleKey, self:true }];
+  for(const id in NET.players){ const p=NET.players[id]; rows.push({ name:p.name||id.slice(0,4), color:p.color, v:p.v, hp:p.hp, al:p.al, role:p.role }); }
   panel.innerHTML='';
   const title=document.createElement('div'); title.className='peerTitle'; title.textContent='PLAYERS · '+rows.length;
   panel.appendChild(title);
   for(const r of rows){
     const row=document.createElement('div'); row.className='peerRow'+(r.self?' self':'')+(r.al===0?' dead':'');
     const dot=document.createElement('span'); dot.className='peerDot'; dot.style.background=r.color;
-    const nm=document.createElement('span'); nm.className='peerName'; nm.textContent=(r.v?'🚗 ':'🚶 ')+r.name;
+    const em=(r.role && ROLES[r.role]) ? ROLES[r.role].emoji : (r.v?'🚗':'🚶');
+    const nm=document.createElement('span'); nm.className='peerName'; nm.textContent=em+' '+r.name;
     const hp=document.createElement('span'); hp.className='peerHp'; hp.textContent=(r.al===0?'💀':(r.hp!=null?r.hp:'–'));
     const kl=document.createElement('span'); kl.className='peerKills'; kl.textContent='⚔'+(killScores[r.name]||0);
     row.append(dot,nm,hp,kl); panel.appendChild(row);
@@ -1943,6 +1992,7 @@ function updateNetTag(){
 resize();
 genCity(cityKey);
 document.getElementById('playerName').value = MYNAME;
+document.querySelectorAll('.roleBtn').forEach(b=>b.classList.toggle('sel', b.dataset.role===roleKey));
 
 })();
 </script>

@@ -40,13 +40,17 @@ The point: the entire real-time layer is tiny, and **there is no server anywhere
 - **Fire:** click / red button · **1‑2‑3** switch weapon
 - **Enter / exit car:** F / green button · **Space** handbrake
 
+## Roles
+
+Pick a role in the intro — **🏃 Runner · 🚔 Cop · 🚚 Truck · 🏎️ Sport** — and you spawn embodying it (the driving roles start in that vehicle). This is the design answer to shared-world sync: instead of trying to replicate NPC traffic identically across windows, **the meaningful vehicles are players**. A late-joiner just picks a role and spawns *now* — no shared clock, no catch-up — and cop-vs-robber chases happen between real humans. Ambient NPC traffic stays purely local and cosmetic. Your role travels in the same presence snapshot and shows as an emoji in the player list.
+
 ## Multiplayer
 
-The right-side panel lists every connected player with their vehicle (🚗 / 🚶), HP and kills. Share your URL with a `#roomname` and have friends pick the same city to join you.
+The right-side panel lists every connected player with their role, HP and kills. Share your URL with a `#roomname` and have friends pick the same city to join you.
 
 ## Roadmap
 
-- **Role selection** — join as a cop, a truck, a sports car or a pedestrian, so the meaningful vehicles are players (dissolves NPC-traffic sync entirely, and makes cop-vs-robber chases real).
+- **Role-based scoring** — cops score for taking down runners, runners for surviving/evading.
 
 ## Author
 
