@@ -23,8 +23,8 @@ const db = await gdb('ch-' + city + '-' + room, { rtc: true })
 
 No backend, no matchmaking service, no relays to run — GenosRTC handles the WebRTC transport and the signaling (over Nostr relays). What travels over the wire:
 
-- **Player presence** — each player broadcasts its transform (position, aim, vehicle, weapon, HP, name) at ~15 Hz over an **ephemeral data channel** (`db.room.channel('p')`). Ephemeral channels are the right tool for high-frequency state — not the persistent graph (`db.put`).
-- **Aim** — the exact direction each player is pointing / shooting.
+- **Player presence** — each player broadcasts its transform (position, heading/aim, vehicle, role, weapon, HP, name) at ~15 Hz over an **ephemeral data channel** (`db.room.channel('p')`). Ephemeral channels are the right tool for high-frequency state — not the persistent graph (`db.put`).
+- **Aim & heading** — where each player points (drives / shoots), so remote cars face their travel direction and on-foot players aim their weapon correctly.
 - **Shots** — discrete fire events (`channel('f')`): bullets, grenades and melee are rendered on every peer from the real origin and angle.
 - **PvP damage** — **self-authoritative**: each client computes hits against *its own* player and applies its own damage. Nobody decides your health but you → no desync, and cheat-resistant.
 - **Kills & scoreboard** — on death the victim broadcasts credit to the killer (`channel('k')`); everyone updates the ⚔ scoreboard and the kill feed.
@@ -35,10 +35,10 @@ The point: the entire real-time layer is tiny, and **there is no server anywhere
 
 ## Controls
 
-- **Move / drive:** WASD / Arrows / left stick
-- **Aim:** mouse (or drag on mobile)
-- **Fire:** click / red button · **1‑2‑3** switch weapon
-- **Enter / exit car:** F / green button · **Space** handbrake
+- **On foot:** WASD / Arrows to move · the **mouse aims** your weapon.
+- **Driving (desktop):** the **mouse steers** the car's heading — point where you want to go and fire; **W / S** throttle & reverse · **Space** handbrake for drifts.
+- **Touch / mobile:** the left stick both drives and steers.
+- **Both:** **click / 🔥** fire · **1‑2‑3** switch weapon · **F / 🚪** enter or exit a car.
 
 ## Roles
 
