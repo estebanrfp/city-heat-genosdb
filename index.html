@@ -783,30 +783,14 @@ function spawnWorld(){
   player.x = spawn.x; player.y = spawn.y; player.angle = 0;
   applyRole();
 
-  // traffic cars
-  const carCount = 16;
-  for(let i=0;i<carCount;i++){
-    const s = findRoadSpawn();
-    const type = CAR_TYPES[Math.floor(Math.random()*3)];
-    const ang = (Math.random()<0.5) ? (Math.random()<0.5?0:Math.PI) : (Math.random()<0.5?Math.PI/2:-Math.PI/2);
-    const c = makeCar(s.x, s.y, ang, type, {mode:'drive', targetSeg:null, wait:0});
-    c.driver = 'ai';
-    cars.push(c);
-  }
-  // pedestrians
-  for(let i=0;i<22;i++){
-    const s = findSidewalkSpawn();
-    peds.push(makePed(s.x, s.y));
-  }
-  // one parked "special" fast car near player for convenience
-  const nearSpawn = findRoadSpawn();
-  const sport = makeCar(nearSpawn.x+40, nearSpawn.y, 0, CAR_TYPES[1], null);
-  cars.push(sport);
-
-  // ammo/health pickups scattered
+  // Player-only world: no AI traffic or pedestrians — every vehicle is a real player.
+  // Only static pickups remain, and they're SEEDED from the city so every client
+  // generates them at the exact same spots (immobile => trivially consistent, no sync).
+  const prng = mulberry32(CITIES[cityKey].seed + 999);
   for(let i=0;i<8;i++){
-    const s = findSidewalkSpawn();
-    pickups.push({x:s.x,y:s.y, kind: Math.random()<0.5?'health':'ammo', taken:false, bob:Math.random()*Math.PI*2});
+    let x, y, tries=0;
+    do { x = 1+Math.floor(prng()*(MAP_W-2)); y = 1+Math.floor(prng()*(MAP_H-2)); tries++; } while(grid[y][x]!==0 && tries<300);
+    pickups.push({ id:i, x:x*TILE+TILE/2, y:y*TILE+TILE/2, kind: prng()<0.5?'health':'ammo', taken:false, bob:prng()*Math.PI*2 });
   }
 
   camera.x = player.x; camera.y = player.y;
@@ -1287,8 +1271,9 @@ function updatePed(p, dt){
 /* ---------------- COPS ---------------- */
 let copSpawnTimer = 0;
 function updateCopsSpawning(dt){
+  return; // manhunt mode: no AI cops — the hunters are real player-cops
+  // eslint-disable-next-line no-unreachable
   if(roleKey!=='runner' || player.wanted<=0){
-    // only runners are hunted; despawn any cops when there's no heat
     if(cops.length && Math.random()<0.01) cops.pop();
     return;
   }
