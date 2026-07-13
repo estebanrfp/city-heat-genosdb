@@ -119,6 +119,14 @@
   #centerPrompt.show{display:block;}
   #centerPrompt b{color:var(--amber);}
 
+  #modeOverlay{
+    position:absolute;inset:0;background:rgba(5,7,11,.98);z-index:60;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  #modeOverlay.hidden{display:none;}
+  #modeBox{max-width:440px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:22px;text-align:center;}
+  #modeBox h1{margin:0 0 4px;color:var(--amber);font-size:26px;letter-spacing:3px;}
+
   #loginOverlay{
     position:absolute;inset:0;background:rgba(5,7,11,.97);z-index:50;
     display:flex;align-items:center;justify-content:center;padding:20px;
@@ -268,7 +276,17 @@
       <div class="wpnDot" data-w="2">💣</div>
     </div>
 
-    <div id="loginOverlay">
+    <div id="modeOverlay">
+      <div id="modeBox">
+        <h1>CITY HEAT</h1>
+        <div class="sub">CHOOSE A MODE</div>
+        <button id="btnModeSolo" class="loginBtn">🎮 Single Player (traffic, peds &amp; cops)</button>
+        <button id="btnModeMp" class="loginBtn ghost">🌐 Multiplayer — P2P manhunt (sign in)</button>
+        <div class="loginFoot">Single Player is the classic game. Multiplayer is serverless P2P with a signed identity, secured by GenosDB.</div>
+      </div>
+    </div>
+
+    <div id="loginOverlay" class="hidden">
       <div id="loginBox">
         <h1>CITY HEAT</h1>
         <div class="sub">SIGN IN TO PLAY · secured by GenosDB</div>
@@ -435,6 +453,7 @@ const ROLES = {
   sport:  { label:'SPORT',  emoji:'🏎️', car:1,  onFoot:false, weapon:1 },
 };
 let roleKey = localStorage.getItem('cityheat_role') || 'runner';
+let gameMode = null; // 'solo' = classic single-player with NPCs (no login) | 'mp' = P2P manhunt (login)
 
 /* ---------------- WORLD / MAP GENERATION ---------------- */
 const TILE = 64;
@@ -711,7 +730,7 @@ document.getElementById('startBtn').addEventListener('click', ()=>{
   const nm=document.getElementById('playerName').value.trim();
   MYNAME = (nm || MYNAME).slice(0,12);
   localStorage.setItem('cityheat_name', MYNAME);
-  if(!AUTH.ok){ document.getElementById('loginOverlay').classList.remove('hidden'); return; } // signed in already (login is first)
+  if(gameMode==='mp' && !AUTH.ok){ document.getElementById('loginOverlay').classList.remove('hidden'); return; } // MP requires login; Solo doesn't
   introOverlay.classList.add('hidden');
   startGame(cityKey);
 });
@@ -740,7 +759,7 @@ function togglePause(){
 function startGame(key){
   cityKey = key; city = CITIES[cityKey];
   document.getElementById('cityName').textContent = city.label;
-  connectNet(); // join/switch the P2P room for this city
+  if(gameMode==='mp') connectNet(); // P2P only in multiplayer
   myScore = 0;
   genCity(cityKey);
   spawnWorld();
@@ -814,9 +833,18 @@ function spawnWorld(){
   player.x = spawn.x; player.y = spawn.y; player.angle = 0;
   applyRole();
 
-  // Player-only world: no AI traffic or pedestrians — every vehicle is a real player.
-  // Only static pickups remain, and they're SEEDED from the city so every client
-  // generates them at the exact same spots (immobile => trivially consistent, no sync).
+  // SOLO restores the classic single-player NPC world; MP is player-only (every vehicle is a real player).
+  if(gameMode==='solo'){
+    for(let i=0;i<16;i++){
+      const s = findRoadSpawn();
+      const type = CAR_TYPES[Math.floor(Math.random()*3)];
+      const ang = (Math.random()<0.5) ? (Math.random()<0.5?0:Math.PI) : (Math.random()<0.5?Math.PI/2:-Math.PI/2);
+      const c = makeCar(s.x, s.y, ang, type, {mode:'drive', targetSeg:null, wait:0}); c.driver='ai'; cars.push(c);
+    }
+    for(let i=0;i<22;i++){ const s = findSidewalkSpawn(); peds.push(makePed(s.x, s.y)); }
+    const near = findRoadSpawn(); cars.push(makeCar(near.x+40, near.y, 0, CAR_TYPES[1], null)); // a fast car nearby
+  }
+  // Static pickups (both modes) — SEEDED from the city so every client places them identically.
   const prng = mulberry32(CITIES[cityKey].seed + 999);
   for(let i=0;i<8;i++){
     let x, y, tries=0;
@@ -924,7 +952,7 @@ function throwGrenade(){
 }
 
 function addWanted(amt){
-  if(roleKey!=='runner') return; // only the outlaw (runner) draws police heat — cops/trucks/sports are not hunted
+  if(gameMode==='mp' && roleKey!=='runner') return; // MP: only the runner draws heat. Solo: always (single-player).
   player.wanted = Math.min(5, player.wanted+amt);
   player.wantedTimer = 14; // seconds without crime before it can decay
 }
@@ -1302,9 +1330,8 @@ function updatePed(p, dt){
 /* ---------------- COPS ---------------- */
 let copSpawnTimer = 0;
 function updateCopsSpawning(dt){
-  return; // manhunt mode: no AI cops — the hunters are real player-cops
-  // eslint-disable-next-line no-unreachable
-  if(roleKey!=='runner' || player.wanted<=0){
+  if(gameMode!=='solo') return; // AI cops only in Solo; MP is hunted by real player-cops
+  if(player.wanted<=0){
     if(cops.length && Math.random()<0.01) cops.pop();
     return;
   }
@@ -1479,8 +1506,8 @@ function update(dt){
   updatePlayer(dt);
   if(!player.inVehicle) updateNearestCar();
 
-  // role scoring + surround/capture: runners earn while evading; 3 cops within 140px for 4s = busted
-  if(roleKey==='runner' && player.alive){
+  // MP manhunt: runners earn while evading; 3 cops within 140px for 4s = busted
+  if(gameMode==='mp' && roleKey==='runner' && player.alive){
     let hunters = 0; const closers = [];
     for(const id in NET.players){
       const p = NET.players[id];
@@ -1924,7 +1951,8 @@ const GOV_RULES = [
   { if:{ role:GOV_MEMBER, career:{ $gte:PRO_AT } }, then:{ assignRole:'manager' } }, // rookie → pro
   { if:{ role:GOV_MEMBER, career:{ $gte:VET_AT } }, then:{ assignRole:'admin' } },   // pro → veteran
 ];
-const RANKS = { guest:'NEW', user:'ROOKIE', manager:'PRO', admin:'VET', superadmin:'ADMIN' };
+// Achievement badges (insignias) — cosmetic reputation only; they NEVER gate gameplay (any player picks any role and plays).
+const RANKS = { guest:'', user:'🥉', manager:'🥈', admin:'🥇', superadmin:'🛡️' };
 const roleRanks = Object.create(null); // address(lowercase) -> SM role
 let myRank = 'guest';
 
@@ -2185,7 +2213,8 @@ document.querySelectorAll('.roleBtn').forEach(b=>b.classList.toggle('sel', b.dat
 document.getElementById('cityName').textContent = city.label;
 document.querySelectorAll('.cityBtn').forEach(b=>b.classList.toggle('sel', b.dataset.city===cityKey));
 wireLogin();
-bootAuth(); // create the ONE SM arena DB and drive the mandatory login (shown until signed in)
+document.getElementById('btnModeSolo').onclick = ()=>{ gameMode='solo'; document.getElementById('modeOverlay').classList.add('hidden'); }; // classic, no login
+document.getElementById('btnModeMp').onclick = ()=>{ gameMode='mp'; document.getElementById('modeOverlay').classList.add('hidden'); document.getElementById('loginOverlay').classList.remove('hidden'); bootAuth(); }; // sign-in + P2P
 
 })();
 </script>
