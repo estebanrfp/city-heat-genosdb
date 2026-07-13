@@ -1071,11 +1071,15 @@ function updateDrivingControls(car, dt, isPlayer){
   let throttle = 0, steer = 0, handbrake = false;
 
   if(isPlayer){
-    if(keys['w']||keys['arrowup']) throttle += 1;
-    if(keys['s']||keys['arrowdown']) throttle -= 1;
-    if(keys['a']||keys['arrowleft']) steer -= 1;
-    if(keys['d']||keys['arrowright']) steer += 1;
-    if(stick.mag>0.15){ throttle += -stick.dy; steer += stick.dx; }
+    if(stick.mag>0.15){
+      // touch: the stick both drives and steers (mobile)
+      throttle += -stick.dy; steer += stick.dx;
+    } else {
+      // desktop: W/S throttle; the mouse steers the car's heading toward the pointer
+      if(keys['w']||keys['arrowup']) throttle += 1;
+      if(keys['s']||keys['arrowdown']) throttle -= 1;
+      steer += angDiff(Math.atan2(mouse.worldY - car.y, mouse.worldX - car.x), car.angle) * 2;
+    }
     throttle = Math.max(-1,Math.min(1,throttle));
     steer = Math.max(-1,Math.min(1,steer));
     handbrake = keys[' ']||btnState.handbrake;
@@ -1102,8 +1106,8 @@ function updateDrivingControls(car, dt, isPlayer){
   car.speed = Math.max(-t.maxSpeed*0.45, Math.min(maxSp, car.speed));
   if(Math.abs(car.speed)<3 && throttle===0) car.speed = 0;
 
-  // turning scaled by speed (can't turn much standing still, sharper when handbraking)
-  const speedFactor = Math.min(1, Math.abs(car.speed)/60);
+  // turning scaled by speed (sharper when handbraking); the player keeps aim authority when slow
+  const speedFactor = isPlayer ? Math.max(0.45, Math.min(1, Math.abs(car.speed)/60)) : Math.min(1, Math.abs(car.speed)/60);
   const turnMul = handbrake ? 1.8 : 1;
   const dir = (car.speed<0) ? -1 : 1;
   car.angle += steer * t.turn * dt * speedFactor * turnMul * dir;
