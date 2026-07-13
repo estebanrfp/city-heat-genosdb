@@ -909,6 +909,7 @@ function throwGrenade(){
 }
 
 function addWanted(amt){
+  if(roleKey!=='runner') return; // only the outlaw (runner) draws police heat — cops/trucks/sports are not hunted
   player.wanted = Math.min(5, player.wanted+amt);
   player.wantedTimer = 14; // seconds without crime before it can decay
 }
@@ -1286,8 +1287,8 @@ function updatePed(p, dt){
 /* ---------------- COPS ---------------- */
 let copSpawnTimer = 0;
 function updateCopsSpawning(dt){
-  if(player.wanted<=0){ 
-    // despawn cops gradually if wanted cleared
+  if(roleKey!=='runner' || player.wanted<=0){
+    // only runners are hunted; despawn any cops when there's no heat
     if(cops.length && Math.random()<0.01) cops.pop();
     return;
   }
