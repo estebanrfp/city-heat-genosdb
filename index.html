@@ -131,6 +131,7 @@
   .loginWarn{font-size:11px;color:var(--amber);background:rgba(255,176,32,.1);border:1px solid var(--amber-dim);border-radius:6px;padding:8px;margin-bottom:8px;text-align:left;}
   .loginBtn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:8px;background:linear-gradient(180deg,#ffc851,var(--amber));color:#1a1200;font-weight:bold;font-size:14px;letter-spacing:1px;cursor:pointer;}
   .loginBtn.ghost{background:var(--panel-2);color:var(--text);border:1px solid var(--line);}
+  .loginBtn.dark{background:#0d1018;color:var(--text-dim);border:1px solid var(--line);font-size:11px;letter-spacing:.5px;margin-top:14px;}
   .loginBtn.hidden,.loginWarn.hidden{display:none;}
   .loginFoot{font-size:10px;color:var(--text-dim);margin-top:14px;line-height:1.5;}
 
@@ -278,6 +279,7 @@
         <button id="btnGenerate" class="loginBtn ghost">✨ Create new identity</button>
         <button id="btnProtect" class="loginBtn hidden">🔐 Protect with Passkey — stay signed in</button>
         <button id="btnCopyMnemonic" class="loginBtn ghost hidden">📋 Copy phrase</button>
+        <button id="btnSuperadmin" class="loginBtn dark">🛡️ Superadmin (demo — runs the governance engine)</button>
         <div class="loginFoot">Your identity is a cryptographic key on this device. Every move is signed — no server, no passwords.</div>
       </div>
     </div>
@@ -1906,6 +1908,9 @@ const NET_CDN = "https://cdn.jsdelivr.net/npm/genosdb@latest/dist/index.min.js";
    and happens BEFORE the game; every operation is then signed by the player's
    key (anti-cheat). The arena's map is fixed by the URL hash (#chicago, #dubai). */
 const SUPERADMIN_ADDRESS = '0xbfDe0eCEC5332Fd86D2570085571D6051Df098dA'; // demo superadmin (public throwaway address — swap for a real one)
+// ⚠️ TESTING ONLY — a public, throwaway mnemonic so a window can run the governance engine with one click.
+// Embedding mnemonics in source is NEVER acceptable in a real app; in production a fallback server (GenosSRV) is the online superadmin.
+const DEMO_SUPERADMIN_MNEMONIC = 'panic now afford carbon donate lecture drift excite collect essay stuff prosper';
 const ARENA_DB = 'city-heat-arena'; // ONE shared DB: mnemonic identity doesn't carry across DB instances, so login lives here
 const AUTH = { db:null, ok:false, address:null, matchSub:null, govSub:null };
 
@@ -2071,6 +2076,7 @@ function wireLogin(){
   $id('btnPasskeyLogin').onclick = async ()=>{ try{ await AUTH.db.sm.loginCurrentUserWithWebAuthn(); }catch(e){ toast('PASSKEY', e.message||'Passkey login failed'); } };
   $id('btnProtect').onclick = async ()=>{ try{ await AUTH.db.sm.protectCurrentIdentityWithWebAuthn(); }catch(e){ toast('PASSKEY', e.message||'Passkey setup failed'); } };
   $id('btnCopyMnemonic').onclick = ()=>{ navigator.clipboard && navigator.clipboard.writeText(mb.value); toast('COPIED','Recovery phrase copied — keep it safe.'); };
+  $id('btnSuperadmin').onclick = async ()=>{ try{ await AUTH.db.sm.loginOrRecoverUserWithMnemonic(DEMO_SUPERADMIN_MNEMONIC); }catch(e){ toast('SUPERADMIN', e.message||'Could not start the engine'); } };
 }
 
 function netSend(){
