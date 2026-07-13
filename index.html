@@ -81,6 +81,8 @@
   .peerName{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .peerHp{color:var(--green);font-weight:bold;}
   .peerKills{color:var(--amber);font-weight:bold;min-width:22px;text-align:right;}
+  .peerRank{font-size:8px;font-weight:bold;letter-spacing:.5px;color:var(--blue);background:rgba(77,163,255,.14);padding:1px 4px;border-radius:4px;}
+  .peerRank:empty{display:none;}
   @media (max-width:600px){ #peerPanel{width:124px;top:134px;font-size:10px;} }
 
   .nameInput{
@@ -1905,7 +1907,21 @@ const NET_CDN = "https://cdn.jsdelivr.net/npm/genosdb@latest/dist/index.min.js";
    key (anti-cheat). The arena's map is fixed by the URL hash (#chicago, #dubai). */
 const SUPERADMIN_ADDRESS = '0xbfDe0eCEC5332Fd86D2570085571D6051Df098dA'; // demo superadmin (public throwaway address — swap for a real one)
 const ARENA_DB = 'city-heat-arena'; // ONE shared DB: mnemonic identity doesn't carry across DB instances, so login lives here
-const AUTH = { db:null, ok:false, address:null, matchSub:null };
+const AUTH = { db:null, ok:false, address:null, matchSub:null, govSub:null };
+
+// Governance: a merit ladder over career points, resolved by LAST-MATCH-WINS and signed
+// by an online superadmin (the engine runs only on their device — see governance.md).
+const GOV_MEMBER = { $in:['user','manager','admin'] };
+const PRO_AT = 500, VET_AT = 1500;
+const GOV_RULES = [
+  { if:{ role:'guest' }, offsetTimestamp:5000, then:{ assignRole:'user' } },        // onboarding
+  { if:{ role:GOV_MEMBER }, then:{ assignRole:'user' } },                            // floor
+  { if:{ role:GOV_MEMBER, career:{ $gte:PRO_AT } }, then:{ assignRole:'manager' } }, // rookie → pro
+  { if:{ role:GOV_MEMBER, career:{ $gte:VET_AT } }, then:{ assignRole:'admin' } },   // pro → veteran
+];
+const RANKS = { guest:'NEW', user:'ROOKIE', manager:'PRO', admin:'VET', superadmin:'ADMIN' };
+const roleRanks = Object.create(null); // address(lowercase) -> SM role
+let myRank = 'guest';
 
 function netColor(id){
   let h=0; for(let i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))>>>0;
@@ -1927,14 +1943,14 @@ function killPoints(killerRole, victimRole){ // role-based bounty
 function onKill(d){ // kill feed + award points to the killer (you score your own kills locally)
   if(!d || !d.victim) return;
   toast('KILL', (d.killer||'?')+' wasted '+d.victim);
-  if(d.killer===MYNAME) myScore += killPoints(d.killerRole, d.victimRole);
+  if(d.killer===MYNAME){ const pts=killPoints(d.killerRole, d.victimRole); myScore += pts; addCareer(pts); } // career = persistent, governance-tracked
   renderPeerPanel();
 }
 
 function onCapture(d){ // a runner was surrounded and busted; the nearby cops split the bounty
   if(!d || !d.captured) return;
   toast('BUSTED', d.captured+' was captured!');
-  if(d.cops && d.cops.includes(MYNAME)) myScore += 120;
+  if(d.cops && d.cops.includes(MYNAME)){ myScore += 120; addCareer(120); }
   renderPeerPanel();
 }
 
@@ -1948,7 +1964,7 @@ function connectNet(){
       if(!d || typeof d.x!=='number') return;
       let p = NET.players[id];
       if(!p){ p = NET.players[id] = { rx:d.x, ry:d.y, ra:d.a||0, color:netColor(id), name:d.n }; toast('PLAYER JOINED', (d.n||'A rival')+' is loose in '+city.label); }
-      p.name=d.n||p.name; p.role=d.r||p.role; p.score=d.s; p.tx=d.x; p.ty=d.y; p.ta=d.a||0; p.v=d.v; p.ct=d.ct; p.w=d.w; p.hp=d.hp; p.al=d.al; p.last=performance.now();
+      p.name=d.n||p.name; p.role=d.r||p.role; p.score=d.s; p.addr=d.ad||p.addr; p.tx=d.x; p.ty=d.y; p.ta=d.a||0; p.v=d.v; p.ct=d.ct; p.w=d.w; p.hp=d.hp; p.al=d.al; p.last=performance.now();
       if(Math.hypot(p.rx-d.x,p.ry-d.y)>400){ p.rx=d.x; p.ry=d.y; p.ra=d.a||0; }
     });
     NET.fire = NET.db.room.channel('f'); // discrete shot events
@@ -1967,7 +1983,7 @@ async function bootAuth(){ // create the ONE SM-enabled arena DB and drive the m
   if(AUTH.db) return true;
   try{
     NET.gdb = NET.gdb || (await import(NET_CDN)).gdb;
-    AUTH.db = await NET.gdb(ARENA_DB, { rtc:true, sm:{ superAdmins:[SUPERADMIN_ADDRESS] } });
+    AUTH.db = await NET.gdb(ARENA_DB, { rtc:true, sm:{ superAdmins:[SUPERADMIN_ADDRESS], governanceRules:GOV_RULES } });
     AUTH.db.sm.setSecurityStateChangeCallback(onSecurity); // single source of truth for the login UI
     refreshLoginUI();
     return true;
@@ -1992,6 +2008,31 @@ async function subscribeMatch(){
   AUTH.matchSub = unsubscribe;
 }
 
+/* ---- Governance: career metric lives alongside the SM-managed role in user:<address> ---- */
+async function ensureCareerDoc(addr){ // db.put REPLACES the node value — always spread existing (governance.md)
+  const id = 'user:'+addr;
+  const { result } = await AUTH.db.get(id);
+  const v = result && result.value;
+  if(!v || v.career==null) await AUTH.db.put({ role:'guest', ...v, career:(v&&v.career)||0 }, id);
+}
+async function addCareer(pts){ // atomic-ish points bump; preserves role + rest of the node
+  if(!AUTH.ok || !pts) return;
+  const id = 'user:'+AUTH.address;
+  const { result } = await AUTH.db.get(id);
+  const v = (result && result.value) || {};
+  await AUTH.db.put({ ...v, career:(v.career||0)+pts }, id);
+}
+async function subscribeGovernance(){
+  if(!AUTH.db || AUTH.govSub || !AUTH.address) return;
+  await ensureCareerDoc(AUTH.address);
+  AUTH.db.get('user:'+AUTH.address, node=>{ if(node && node.value && node.value.role){ myRank = node.value.role; renderPeerPanel(); } }); // my own rank, live
+  const { unsubscribe } = await AUTH.db.map({ query:{ role:{ $exists:true } } }, ({id,value})=>{ // live roster of ranks
+    if(id && id.startsWith('user:') && value && value.role){ roleRanks[id.slice(5).toLowerCase()] = value.role; renderPeerPanel(); }
+  });
+  AUTH.govSub = unsubscribe;
+}
+function rankOf(addr){ return addr ? (RANKS[roleRanks[addr.toLowerCase()]] || null) : null; }
+
 function onSecurity(state){
   AUTH.ok = !!state.isActive;
   AUTH.address = state.activeAddress || null;
@@ -2000,6 +2041,7 @@ function onSecurity(state){
     overlay && overlay.classList.add('hidden');
     if(!localStorage.getItem('cityheat_name')){ MYNAME = AUTH.db.sm.abbrAddr(state.activeAddress); const pn=$id('playerName'); if(pn) pn.value=MYNAME; }
     subscribeMatch();
+    subscribeGovernance();
   } else {
     overlay && overlay.classList.remove('hidden'); // login is mandatory
   }
@@ -2041,7 +2083,7 @@ function netSend(){
     x: Math.round(player.x), y: Math.round(player.y),
     a: +(inV ? inV.angle : aimAngle()).toFixed(2), // render heading: car direction while driving, aim on foot
     v: inV?1:0, ct: inV?CAR_TYPES.indexOf(inV.type):-1,
-    w: player.weapon, hp: Math.round(player.hp), al: player.alive?1:0, n: MYNAME, r: roleKey, s: Math.round(myScore)
+    w: player.weapon, hp: Math.round(player.hp), al: player.alive?1:0, n: MYNAME, r: roleKey, s: Math.round(myScore), ad: AUTH.address
   });
   for(const id in NET.players){ if(now-(NET.players[id].last||0)>3500) delete NET.players[id]; }
   updateNetTag();
@@ -2099,8 +2141,8 @@ function renderPeerPanel(){ // right-side list of connected players (self + peer
   const panel = document.getElementById('peerPanel');
   if(!panel) return;
   if(!NET.ready || !running){ panel.innerHTML=''; return; }
-  const rows = [{ name:MYNAME, color:city.accent, v:player.inVehicle?1:0, hp:Math.round(player.hp), al:player.alive?1:0, role:roleKey, score:Math.round(myScore), self:true }];
-  for(const id in NET.players){ const p=NET.players[id]; rows.push({ name:p.name||id.slice(0,4), color:p.color, v:p.v, hp:p.hp, al:p.al, role:p.role, score:p.score||0 }); }
+  const rows = [{ name:MYNAME, color:city.accent, v:player.inVehicle?1:0, hp:Math.round(player.hp), al:player.alive?1:0, role:roleKey, score:Math.round(myScore), rank:(AUTH.ok?RANKS[myRank]:null), self:true }];
+  for(const id in NET.players){ const p=NET.players[id]; rows.push({ name:p.name||id.slice(0,4), color:p.color, v:p.v, hp:p.hp, al:p.al, role:p.role, score:p.score||0, rank:rankOf(p.addr) }); }
   rows.sort((a,b)=>(b.score||0)-(a.score||0)); // leaderboard order
   panel.innerHTML='';
   const title=document.createElement('div'); title.className='peerTitle'; title.textContent='LEADERBOARD · '+rows.length;
@@ -2110,9 +2152,10 @@ function renderPeerPanel(){ // right-side list of connected players (self + peer
     const dot=document.createElement('span'); dot.className='peerDot'; dot.style.background=r.color;
     const em=(r.role && ROLES[r.role]) ? ROLES[r.role].emoji : (r.v?'🚗':'🚶');
     const nm=document.createElement('span'); nm.className='peerName'; nm.textContent=em+' '+r.name;
+    const rk=document.createElement('span'); rk.className='peerRank'; if(r.rank) rk.textContent=r.rank;
     const hp=document.createElement('span'); hp.className='peerHp'; hp.textContent=(r.al===0?'💀':(r.hp!=null?r.hp:'–'));
     const kl=document.createElement('span'); kl.className='peerKills'; kl.textContent=r.score||0;
-    row.append(dot,nm,hp,kl); panel.appendChild(row);
+    row.append(dot,nm,rk,hp,kl); panel.appendChild(row);
   }
 }
 
