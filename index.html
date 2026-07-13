@@ -863,9 +863,7 @@ function fireWeaponStart(){
   }
 }
 function aimAngle(){
-  if(player.inVehicle){
-    return player.inVehicle.angle;
-  }
+  // Always aim toward the mouse/pointer — even while driving (drive-by shooting)
   return Math.atan2(mouse.worldY-player.y, mouse.worldX-player.x);
 }
 function meleePunch(){
@@ -1901,7 +1899,7 @@ function netSend(){
   const inV = player.inVehicle;
   NET.ch.send({
     x: Math.round(player.x), y: Math.round(player.y),
-    a: +aimAngle().toFixed(2), // aim direction (car heading when driving, pointer when on foot)
+    a: +(inV ? inV.angle : aimAngle()).toFixed(2), // render heading: car direction while driving, aim on foot
     v: inV?1:0, ct: inV?CAR_TYPES.indexOf(inV.type):-1,
     w: player.weapon, hp: Math.round(player.hp), al: player.alive?1:0, n: MYNAME, r: roleKey
   });
