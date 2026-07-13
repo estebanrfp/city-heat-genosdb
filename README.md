@@ -24,6 +24,8 @@ Cops corner the runner: **3 cops within range for 4 seconds = BUSTED** (a pulsin
 
 Because there are no shared NPCs, a **late-joiner just spawns now** — no shared clock, no catch-up. Cop-vs-robber chases happen between real humans.
 
+Matches run in **rounds** (2 min): the round ends when the timer runs out (**runners survive → they win**) or every runner is caught (**cops win**), and a results screen shows the winner and final scores before the next round. **Role slots** keep it balanced — the intro shows live counts (e.g. `COP 2/3`) and caps each role per match.
+
 ## What GenosDB powers
 
 This game is a showcase of the full GenosDB stack — **there is no server anywhere**, browsers talk directly to browsers:
