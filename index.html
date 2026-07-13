@@ -81,6 +81,8 @@
   .peerName{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .peerHp{color:var(--green);font-weight:bold;}
   .peerKills{color:var(--amber);font-weight:bold;min-width:22px;text-align:right;}
+  .peerRank{font-size:8px;font-weight:bold;letter-spacing:.5px;color:var(--blue);background:rgba(77,163,255,.14);padding:1px 4px;border-radius:4px;}
+  .peerRank:empty{display:none;}
   @media (max-width:600px){ #peerPanel{width:124px;top:134px;font-size:10px;} }
 
   .nameInput{
@@ -116,6 +118,30 @@
   }
   #centerPrompt.show{display:block;}
   #centerPrompt b{color:var(--amber);}
+
+  #modeOverlay{
+    position:absolute;inset:0;background:rgba(5,7,11,.98);z-index:60;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  #modeOverlay.hidden{display:none;}
+  #modeBox{max-width:440px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:22px;text-align:center;}
+  #modeBox h1{margin:0 0 4px;color:var(--amber);font-size:26px;letter-spacing:3px;}
+
+  #loginOverlay{
+    position:absolute;inset:0;background:rgba(5,7,11,.97);z-index:50;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  #loginOverlay.hidden{display:none;}
+  #loginBox{max-width:420px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:22px;text-align:center;}
+  #loginBox h1{margin:0 0 4px;color:var(--amber);font-size:26px;letter-spacing:3px;}
+  #mnemonicBox{width:100%;resize:none;margin:14px 0 8px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);font-family:inherit;font-size:12px;}
+  #mnemonicBox:focus{outline:none;border-color:var(--amber);}
+  .loginWarn{font-size:11px;color:var(--amber);background:rgba(255,176,32,.1);border:1px solid var(--amber-dim);border-radius:6px;padding:8px;margin-bottom:8px;text-align:left;}
+  .loginBtn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:8px;background:linear-gradient(180deg,#ffc851,var(--amber));color:#1a1200;font-weight:bold;font-size:14px;letter-spacing:1px;cursor:pointer;}
+  .loginBtn.ghost{background:var(--panel-2);color:var(--text);border:1px solid var(--line);}
+  .loginBtn.dark{background:#0d1018;color:var(--text-dim);border:1px solid var(--line);font-size:11px;letter-spacing:.5px;margin-top:14px;}
+  .loginBtn.hidden,.loginWarn.hidden{display:none;}
+  .loginFoot{font-size:10px;color:var(--text-dim);margin-top:14px;line-height:1.5;}
 
   #introOverlay{
     position:absolute;inset:0;background:rgba(5,7,11,.94);z-index:40;
@@ -248,6 +274,32 @@
       <div class="wpnDot active" data-w="0">👊</div>
       <div class="wpnDot" data-w="1">🔫</div>
       <div class="wpnDot" data-w="2">💣</div>
+    </div>
+
+    <div id="modeOverlay">
+      <div id="modeBox">
+        <h1>CITY HEAT</h1>
+        <div class="sub">CHOOSE A MODE</div>
+        <button id="btnModeSolo" class="loginBtn">🎮 Single Player (traffic, peds &amp; cops)</button>
+        <button id="btnModeMp" class="loginBtn ghost">🌐 Multiplayer — P2P manhunt (sign in)</button>
+        <div class="loginFoot">Single Player is the classic game. Multiplayer is serverless P2P with a signed identity, secured by GenosDB.</div>
+      </div>
+    </div>
+
+    <div id="loginOverlay" class="hidden">
+      <div id="loginBox">
+        <h1>CITY HEAT</h1>
+        <div class="sub">SIGN IN TO PLAY · secured by GenosDB</div>
+        <textarea id="mnemonicBox" rows="2" placeholder="Paste your recovery phrase to log in…" autocomplete="off" spellcheck="false"></textarea>
+        <div id="mnemonicWarn" class="loginWarn hidden">⚠ Save this recovery phrase — it is the only way back into your account.</div>
+        <button id="btnPasskeyLogin" class="loginBtn hidden">🔑 Log in with Passkey</button>
+        <button id="btnMnemonicLogin" class="loginBtn">↩ Log in with recovery phrase</button>
+        <button id="btnGenerate" class="loginBtn ghost">✨ Create new identity</button>
+        <button id="btnProtect" class="loginBtn hidden">🔐 Protect with Passkey — stay signed in</button>
+        <button id="btnCopyMnemonic" class="loginBtn ghost hidden">📋 Copy phrase</button>
+        <button id="btnSuperadmin" class="loginBtn dark">🛡️ Superadmin (demo — runs the governance engine)</button>
+        <div class="loginFoot">Your identity is a cryptographic key on this device. Your identity &amp; progress are signed — no server, no passwords.</div>
+      </div>
     </div>
 
     <div id="introOverlay">
@@ -401,6 +453,7 @@ const ROLES = {
   sport:  { label:'SPORT',  emoji:'🏎️', car:1,  onFoot:false, weapon:1 },
 };
 let roleKey = localStorage.getItem('cityheat_role') || 'runner';
+let gameMode = null; // 'solo' = classic single-player with NPCs (no login) | 'mp' = P2P manhunt (login)
 
 /* ---------------- WORLD / MAP GENERATION ---------------- */
 const TILE = 64;
@@ -663,11 +716,7 @@ const wastedOverlay = document.getElementById('wastedOverlay');
 let paused = false, running = false;
 
 document.querySelectorAll('.cityBtn').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.cityBtn').forEach(b=>b.classList.remove('sel'));
-    btn.classList.add('sel');
-    cityKey = btn.dataset.city;
-  });
+  btn.addEventListener('click', ()=> setArenaCity(btn.dataset.city, true)); // sets the shared match map
 });
 document.querySelectorAll('.roleBtn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
@@ -681,6 +730,7 @@ document.getElementById('startBtn').addEventListener('click', ()=>{
   const nm=document.getElementById('playerName').value.trim();
   MYNAME = (nm || MYNAME).slice(0,12);
   localStorage.setItem('cityheat_name', MYNAME);
+  if(gameMode==='mp' && !AUTH.ok){ document.getElementById('loginOverlay').classList.remove('hidden'); return; } // MP requires login; Solo doesn't
   introOverlay.classList.add('hidden');
   startGame(cityKey);
 });
@@ -709,7 +759,7 @@ function togglePause(){
 function startGame(key){
   cityKey = key; city = CITIES[cityKey];
   document.getElementById('cityName').textContent = city.label;
-  connectNet(); // join/switch the P2P room for this city
+  if(gameMode==='mp') connectNet(); // P2P only in multiplayer
   myScore = 0;
   genCity(cityKey);
   spawnWorld();
@@ -783,30 +833,23 @@ function spawnWorld(){
   player.x = spawn.x; player.y = spawn.y; player.angle = 0;
   applyRole();
 
-  // traffic cars
-  const carCount = 16;
-  for(let i=0;i<carCount;i++){
-    const s = findRoadSpawn();
-    const type = CAR_TYPES[Math.floor(Math.random()*3)];
-    const ang = (Math.random()<0.5) ? (Math.random()<0.5?0:Math.PI) : (Math.random()<0.5?Math.PI/2:-Math.PI/2);
-    const c = makeCar(s.x, s.y, ang, type, {mode:'drive', targetSeg:null, wait:0});
-    c.driver = 'ai';
-    cars.push(c);
+  // SOLO restores the classic single-player NPC world; MP is player-only (every vehicle is a real player).
+  if(gameMode==='solo'){
+    for(let i=0;i<16;i++){
+      const s = findRoadSpawn();
+      const type = CAR_TYPES[Math.floor(Math.random()*3)];
+      const ang = (Math.random()<0.5) ? (Math.random()<0.5?0:Math.PI) : (Math.random()<0.5?Math.PI/2:-Math.PI/2);
+      const c = makeCar(s.x, s.y, ang, type, {mode:'drive', targetSeg:null, wait:0}); c.driver='ai'; cars.push(c);
+    }
+    for(let i=0;i<22;i++){ const s = findSidewalkSpawn(); peds.push(makePed(s.x, s.y)); }
+    const near = findRoadSpawn(); cars.push(makeCar(near.x+40, near.y, 0, CAR_TYPES[1], null)); // a fast car nearby
   }
-  // pedestrians
-  for(let i=0;i<22;i++){
-    const s = findSidewalkSpawn();
-    peds.push(makePed(s.x, s.y));
-  }
-  // one parked "special" fast car near player for convenience
-  const nearSpawn = findRoadSpawn();
-  const sport = makeCar(nearSpawn.x+40, nearSpawn.y, 0, CAR_TYPES[1], null);
-  cars.push(sport);
-
-  // ammo/health pickups scattered
+  // Static pickups (both modes) — SEEDED from the city so every client places them identically.
+  const prng = mulberry32(CITIES[cityKey].seed + 999);
   for(let i=0;i<8;i++){
-    const s = findSidewalkSpawn();
-    pickups.push({x:s.x,y:s.y, kind: Math.random()<0.5?'health':'ammo', taken:false, bob:Math.random()*Math.PI*2});
+    let x, y, tries=0;
+    do { x = 1+Math.floor(prng()*(MAP_W-2)); y = 1+Math.floor(prng()*(MAP_H-2)); tries++; } while(grid[y][x]!==0 && tries<300);
+    pickups.push({ id:i, x:x*TILE+TILE/2, y:y*TILE+TILE/2, kind: prng()<0.5?'health':'ammo', taken:false, bob:prng()*Math.PI*2 });
   }
 
   camera.x = player.x; camera.y = player.y;
@@ -909,7 +952,7 @@ function throwGrenade(){
 }
 
 function addWanted(amt){
-  if(roleKey!=='runner') return; // only the outlaw (runner) draws police heat — cops/trucks/sports are not hunted
+  if(gameMode==='mp' && roleKey!=='runner') return; // MP: only the runner draws heat. Solo: always (single-player).
   player.wanted = Math.min(5, player.wanted+amt);
   player.wantedTimer = 14; // seconds without crime before it can decay
 }
@@ -1071,6 +1114,12 @@ function resolvePedBuildingCollision(ent){
 /* ---------------- DRIVING PHYSICS (shared by player + AI-controlled test) ---------------- */
 function updateDrivingControls(car, dt, isPlayer){
   const t = car.type;
+  // Softer handling for a HUMAN driver in multiplayer only: calmer cop, more agile truck.
+  const mp = isPlayer && gameMode==='mp';
+  const H_MAX  = t.maxSpeed * (mp && t.isCop ? 0.75 : 1);       // cop 260 -> 195
+  const H_TURN = t.turn     * (mp && t.name==='Truck' ? 1.6 : 1); // truck 2.1 -> 3.36 (easier to steer)
+  const H_ACC  = t.accel    * (mp && t.name==='Truck' ? 1.2 : 1);
+  const H_BRK  = t.brake;
   let throttle = 0, steer = 0, handbrake = false;
 
   if(isPlayer){
@@ -1092,28 +1141,28 @@ function updateDrivingControls(car, dt, isPlayer){
   // speed integration
   const forward = car.speed;
   let accel = 0;
-  if(throttle>0){ accel = t.accel*throttle; }
+  if(throttle>0){ accel = H_ACC*throttle; }
   else if(throttle<0){
-    if(forward>5){ accel = t.brake*throttle; } // braking
-    else { accel = t.accel*throttle*0.6; } // reverse
+    if(forward>5){ accel = H_BRK*throttle; } // braking
+    else { accel = H_ACC*throttle*0.6; } // reverse
   } else {
     // engine-off friction: coast to a stop
     accel = -Math.sign(forward)*120;
   }
   if(handbrake){
-    accel = -Math.sign(forward)*t.brake*1.4;
+    accel = -Math.sign(forward)*H_BRK*1.4;
   }
 
   car.speed += accel*dt;
-  const maxSp = t.maxSpeed * (handbrake? 0.6:1);
-  car.speed = Math.max(-t.maxSpeed*0.45, Math.min(maxSp, car.speed));
+  const maxSp = H_MAX * (handbrake? 0.6:1);
+  car.speed = Math.max(-H_MAX*0.45, Math.min(maxSp, car.speed));
   if(Math.abs(car.speed)<3 && throttle===0) car.speed = 0;
 
   // turning scaled by speed (sharper when handbraking); the player keeps aim authority when slow
   const speedFactor = isPlayer ? Math.max(0.45, Math.min(1, Math.abs(car.speed)/60)) : Math.min(1, Math.abs(car.speed)/60);
   const turnMul = handbrake ? 1.8 : 1;
   const dir = (car.speed<0) ? -1 : 1;
-  car.angle += steer * t.turn * dt * speedFactor * turnMul * dir;
+  car.angle += steer * H_TURN * dt * speedFactor * turnMul * dir;
 
   // slight drift when handbraking
   const targetVx = Math.cos(car.angle)*car.speed;
@@ -1287,8 +1336,8 @@ function updatePed(p, dt){
 /* ---------------- COPS ---------------- */
 let copSpawnTimer = 0;
 function updateCopsSpawning(dt){
-  if(roleKey!=='runner' || player.wanted<=0){
-    // only runners are hunted; despawn any cops when there's no heat
+  if(gameMode!=='solo') return; // AI cops only in Solo; MP is hunted by real player-cops
+  if(player.wanted<=0){
     if(cops.length && Math.random()<0.01) cops.pop();
     return;
   }
@@ -1463,12 +1512,29 @@ function update(dt){
   updatePlayer(dt);
   if(!player.inVehicle) updateNearestCar();
 
-  // role scoring: runners earn while alive — more the more cops are hunting nearby (evasion, not camping)
-  if(roleKey==='runner' && player.alive){
-    let hunters = 0;
-    for(const id in NET.players){ const p=NET.players[id]; if(p.al!==0 && p.role==='cop' && p.rx!=null && Math.hypot(p.rx-player.x,p.ry-player.y)<600) hunters++; }
-    myScore += (0.5 + hunters*3) * dt;
-  }
+  // MP manhunt: runners earn while evading; 3 cops within 140px for 4s = busted
+  if(gameMode==='mp' && roleKey==='runner' && player.alive){
+    let hunters = 0; const closers = [];
+    for(const id in NET.players){
+      const p = NET.players[id];
+      if(p.al===0 || p.role!=='cop' || p.rx==null) continue;
+      const d = Math.hypot(p.rx-player.x, p.ry-player.y);
+      if(d<600) hunters++;
+      if(d<140 && p.name) closers.push(p.name);
+    }
+    myScore += (0.5 + hunters*3) * dt; // evasion reward
+    if(closers.length>=3){
+      if(captureTimer===0) toast('⚠ SURROUNDED', 'Break free before they box you in!');
+      captureTimer += dt;
+    } else captureTimer = Math.max(0, captureTimer - dt*2); // slip away and it cools off
+    if(captureTimer>=4){
+      captureTimer = 0; player.alive = false;
+      const ev = { capture:true, captured:MYNAME, cops:[...new Set(closers)] };
+      if(NET.ready && NET.kill) NET.kill.send(ev);
+      onCapture(ev);
+      onWasted('Surrounded and busted by the cops!');
+    }
+  } else captureTimer = 0;
 
   for(const c of cars){
     if(c.driver==='player'){ /* handled in updatePlayer */ }
@@ -1550,6 +1616,13 @@ function render(){
   drawWeatherFx(camX,camY,w,h);
 
   gctx.restore();
+
+  if(captureTimer>0){ // pulsing red "surrounded" vignette while cops box the runner in
+    const a = Math.min(0.55, captureTimer/4*0.55) * (0.55 + 0.45*Math.sin(performance.now()/110));
+    const grad = gctx.createRadialGradient(w/2,h/2,Math.min(w,h)*0.28, w/2,h/2,Math.max(w,h)*0.62);
+    grad.addColorStop(0,'rgba(255,20,20,0)'); grad.addColorStop(1,'rgba(255,20,20,'+Math.max(0,a)+')');
+    gctx.fillStyle=grad; gctx.fillRect(0,0,w,h);
+  }
 
   drawMinimap();
 }
@@ -1863,6 +1936,32 @@ const NET = { gdb:null, db:null, ch:null, fire:null, kill:null, name:null, ready
 const NET_ROOM = (location.hash.slice(1) || 'lobby').replace(/[^a-z0-9-]/gi,'').slice(0,24) || 'lobby';
 const NET_CDN = "https://cdn.jsdelivr.net/npm/genosdb@latest/dist/index.min.js";
 
+/* ---------------- IDENTITY / ARENA (Security Manager) ----------------
+   One shared arena DB, created at load with the SM enabled. Login is mandatory
+   and happens BEFORE the game; every operation is then signed by the player's
+   key (anti-cheat). The arena's map is fixed by the URL hash (#chicago, #dubai). */
+const SUPERADMIN_ADDRESS = '0xbfDe0eCEC5332Fd86D2570085571D6051Df098dA'; // demo superadmin (public throwaway address — swap for a real one)
+// ⚠️ TESTING ONLY — a public, throwaway mnemonic so a window can run the governance engine with one click.
+// Embedding mnemonics in source is NEVER acceptable in a real app; in production a fallback server (GenosSRV) is the online superadmin.
+const DEMO_SUPERADMIN_MNEMONIC = 'panic now afford carbon donate lecture drift excite collect essay stuff prosper';
+const ARENA_DB = 'city-heat-arena'; // ONE shared DB: mnemonic identity doesn't carry across DB instances, so login lives here
+const AUTH = { db:null, ok:false, address:null, matchSub:null, govSub:null };
+
+// Governance: a merit ladder over career points, resolved by LAST-MATCH-WINS and signed
+// by an online superadmin (the engine runs only on their device — see governance.md).
+const GOV_MEMBER = { $in:['user','manager','admin'] };
+const PRO_AT = 500, VET_AT = 1500;
+const GOV_RULES = [
+  { if:{ role:'guest' }, offsetTimestamp:5000, then:{ assignRole:'user' } },        // onboarding
+  { if:{ role:GOV_MEMBER }, then:{ assignRole:'user' } },                            // floor
+  { if:{ role:GOV_MEMBER, career:{ $gte:PRO_AT } }, then:{ assignRole:'manager' } }, // rookie → pro
+  { if:{ role:GOV_MEMBER, career:{ $gte:VET_AT } }, then:{ assignRole:'admin' } },   // pro → veteran
+];
+// Achievement badges (insignias) — cosmetic reputation only; they NEVER gate gameplay (any player picks any role and plays).
+const RANKS = { guest:'', user:'🥉', manager:'🥈', admin:'🥇', superadmin:'🛡️' };
+const roleRanks = Object.create(null); // address(lowercase) -> SM role
+let myRank = 'guest';
+
 function netColor(id){
   let h=0; for(let i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))>>>0;
   return 'hsl('+(h%360)+' 85% 62%)';
@@ -1872,6 +1971,7 @@ const NAMES = ['Viper','Ghost','Reaper','Nitro','Blaze','Shadow','Rico','Diesel'
 function randomName(){ return NAMES[Math.floor(Math.random()*NAMES.length)]; }
 let MYNAME = localStorage.getItem('cityheat_name') || randomName();
 let myScore = 0; // self-authoritative: each player owns and broadcasts its own score
+let captureTimer = 0; // seconds the local runner has been surrounded by cops
 
 function killPoints(killerRole, victimRole){ // role-based bounty
   if(killerRole==='cop'    && victimRole==='runner') return 150; // cop takes down a runner
@@ -1882,34 +1982,135 @@ function killPoints(killerRole, victimRole){ // role-based bounty
 function onKill(d){ // kill feed + award points to the killer (you score your own kills locally)
   if(!d || !d.victim) return;
   toast('KILL', (d.killer||'?')+' wasted '+d.victim);
-  if(d.killer===MYNAME) myScore += killPoints(d.killerRole, d.victimRole);
+  if(d.killer===MYNAME){ const pts=killPoints(d.killerRole, d.victimRole); myScore += pts; addCareer(pts); } // career = persistent, governance-tracked
   renderPeerPanel();
 }
 
-async function connectNet(){
-  const want = 'ch-'+cityKey+'-'+NET_ROOM; // room encodes the city (deterministic map)
-  if(NET.name===want && NET.ready) return;
+function onCapture(d){ // a runner was surrounded and busted; the nearby cops split the bounty
+  if(!d || !d.captured) return;
+  toast('BUSTED', d.captured+' was captured!');
+  if(d.cops && d.cops.includes(MYNAME)){ myScore += 120; addCareer(120); }
+  renderPeerPanel();
+}
+
+function connectNet(){
+  if(NET.ready || !AUTH.db) return; // the arena DB (with SM) is created at load; reuse it
   try{
-    if(!NET.gdb){ NET.gdb = (await import(NET_CDN)).gdb; }
-    if(NET.db && NET.db.room){ try{ NET.db.room.leave(); }catch(_){} }
-    NET.ready=false; NET.players=Object.create(null);
-    NET.db = await NET.gdb(want, { rtc:true });
-    NET.name = want;
+    NET.players=Object.create(null);
+    NET.db = AUTH.db;
     NET.ch = NET.db.room.channel('p');
     NET.ch.on('message', (d,id)=>{
       if(!d || typeof d.x!=='number') return;
       let p = NET.players[id];
       if(!p){ p = NET.players[id] = { rx:d.x, ry:d.y, ra:d.a||0, color:netColor(id), name:d.n }; toast('PLAYER JOINED', (d.n||'A rival')+' is loose in '+city.label); }
-      p.name=d.n||p.name; p.role=d.r||p.role; p.score=d.s; p.tx=d.x; p.ty=d.y; p.ta=d.a||0; p.v=d.v; p.ct=d.ct; p.w=d.w; p.hp=d.hp; p.al=d.al; p.last=performance.now();
+      p.name=d.n||p.name; p.role=d.r||p.role; p.score=d.s; p.addr=d.ad||p.addr; p.tx=d.x; p.ty=d.y; p.ta=d.a||0; p.v=d.v; p.ct=d.ct; p.w=d.w; p.hp=d.hp; p.al=d.al; p.last=performance.now();
       if(Math.hypot(p.rx-d.x,p.ry-d.y)>400){ p.rx=d.x; p.ry=d.y; p.ra=d.a||0; }
     });
     NET.fire = NET.db.room.channel('f'); // discrete shot events
     NET.fire.on('message', (d,id)=> spawnRemoteShot(d,id));
     NET.kill = NET.db.room.channel('k'); // kill / scoreboard events
-    NET.kill.on('message', d=> onKill(d));
+    NET.kill.on('message', d=> { if(d && d.capture) onCapture(d); else onKill(d); });
     NET.db.room.on('peer:leave', id=>{ if(NET.players[id]){ delete NET.players[id]; toast('PLAYER LEFT','A rival left the city'); updateNetTag(); } });
     NET.ready=true; updateNetTag();
   }catch(e){ console.warn('[net] connect failed', e); }
+}
+
+/* ---------------- LOGIN (Security Manager) ---------------- */
+const $id = id => document.getElementById(id);
+
+async function bootAuth(){ // create the ONE SM-enabled arena DB and drive the mandatory login (idempotent)
+  if(AUTH.db) return true;
+  try{
+    NET.gdb = NET.gdb || (await import(NET_CDN)).gdb;
+    AUTH.db = await NET.gdb(ARENA_DB, { rtc:true, sm:{ superAdmins:[SUPERADMIN_ADDRESS], governanceRules:GOV_RULES } });
+    AUTH.db.sm.setSecurityStateChangeCallback(onSecurity); // single source of truth for the login UI
+    refreshLoginUI();
+    return true;
+  }catch(e){ console.warn('[auth] init failed', e); return false; }
+}
+
+/* City = shared match state, so every player renders the same map (one DB, one room). */
+function setArenaCity(c, broadcast){
+  if(!CITIES[c] || c===cityKey) { if(broadcast && AUTH.ok) AUTH.db.put({ city:c }, 'match').catch(()=>{}); return; }
+  cityKey = c; city = CITIES[c];
+  document.querySelectorAll('.cityBtn').forEach(b=>b.classList.toggle('sel', b.dataset.city===c));
+  document.getElementById('cityName').textContent = city.label;
+  if(!running) genCity(cityKey);
+  if(broadcast && AUTH.ok) AUTH.db.put({ city:c }, 'match').catch(()=>{});
+}
+async function subscribeMatch(){
+  if(AUTH.matchSub || !AUTH.db) return;
+  const { unsubscribe } = await AUTH.db.get('match', node=>{
+    const c = node && node.value && node.value.city;
+    if(c && CITIES[c] && c!==cityKey && !running) setArenaCity(c, false);
+  });
+  AUTH.matchSub = unsubscribe;
+}
+
+/* ---- Governance: career metric lives alongside the SM-managed role in user:<address> ---- */
+async function ensureCareerDoc(addr){ // db.put REPLACES the node value — always spread existing (governance.md)
+  const id = 'user:'+addr;
+  const { result } = await AUTH.db.get(id);
+  const v = result && result.value;
+  if(!v || v.career==null) await AUTH.db.put({ role:'guest', ...v, career:(v&&v.career)||0 }, id);
+}
+async function addCareer(pts){ // atomic-ish points bump; preserves role + rest of the node
+  if(!AUTH.ok || !pts) return;
+  const id = 'user:'+AUTH.address;
+  const { result } = await AUTH.db.get(id);
+  const v = (result && result.value) || {};
+  await AUTH.db.put({ ...v, career:(v.career||0)+pts }, id);
+}
+async function subscribeGovernance(){
+  if(!AUTH.db || AUTH.govSub || !AUTH.address) return;
+  await ensureCareerDoc(AUTH.address);
+  AUTH.db.get('user:'+AUTH.address, node=>{ if(node && node.value && node.value.role){ myRank = node.value.role; renderPeerPanel(); } }); // my own rank, live
+  const { unsubscribe } = await AUTH.db.map({ query:{ role:{ $exists:true } } }, ({id,value})=>{ // live roster of ranks
+    if(id && id.startsWith('user:') && value && value.role){ roleRanks[id.slice(5).toLowerCase()] = value.role; renderPeerPanel(); }
+  });
+  AUTH.govSub = unsubscribe;
+}
+function rankOf(addr){ return addr ? (RANKS[roleRanks[addr.toLowerCase()]] || null) : null; }
+
+function onSecurity(state){
+  AUTH.ok = !!state.isActive;
+  AUTH.address = state.activeAddress || null;
+  const overlay = $id('loginOverlay');
+  if(state.isActive){                      // signed in (incl. silent WebAuthn resume) → reveal the intro/lobby
+    overlay && overlay.classList.add('hidden');
+    if(!localStorage.getItem('cityheat_name')){ MYNAME = AUTH.db.sm.abbrAddr(state.activeAddress); const pn=$id('playerName'); if(pn) pn.value=MYNAME; }
+    subscribeMatch();
+    subscribeGovernance();
+  } else {
+    overlay && overlay.classList.remove('hidden'); // login is mandatory
+  }
+  refreshLoginUI(state);
+}
+
+function refreshLoginUI(state){
+  const has = state ? state.hasWebAuthnHardwareRegistration : (AUTH.db && AUTH.db.sm.hasExistingWebAuthnRegistration());
+  const pk = $id('btnPasskeyLogin'); if(pk) pk.classList.toggle('hidden', !has);
+}
+
+function wireLogin(){
+  const mb = $id('mnemonicBox');
+  $id('btnGenerate').onclick = async ()=>{
+    const idn = await AUTH.db.sm.startNewUserRegistration();
+    if(!idn) return;
+    mb.value = idn.mnemonic; mb.readOnly = true;
+    $id('mnemonicWarn').classList.remove('hidden');
+    $id('btnGenerate').classList.add('hidden');
+    $id('btnCopyMnemonic').classList.remove('hidden');
+    $id('btnProtect').classList.remove('hidden');   // recommended: passkey => stay signed in
+  };
+  $id('btnMnemonicLogin').onclick = async ()=>{
+    const m = mb.value.trim(); if(!m){ toast('LOGIN','Paste a recovery phrase, or create a new identity.'); return; }
+    try{ await AUTH.db.sm.loginOrRecoverUserWithMnemonic(m); }catch(e){ toast('LOGIN', e.message||'Invalid recovery phrase'); }
+  };
+  $id('btnPasskeyLogin').onclick = async ()=>{ try{ await AUTH.db.sm.loginCurrentUserWithWebAuthn(); }catch(e){ toast('PASSKEY', e.message||'Passkey login failed'); } };
+  $id('btnProtect').onclick = async ()=>{ try{ await AUTH.db.sm.protectCurrentIdentityWithWebAuthn(); }catch(e){ toast('PASSKEY', e.message||'Passkey setup failed'); } };
+  $id('btnCopyMnemonic').onclick = ()=>{ navigator.clipboard && navigator.clipboard.writeText(mb.value); toast('COPIED','Recovery phrase copied — keep it safe.'); };
+  $id('btnSuperadmin').onclick = async ()=>{ try{ await AUTH.db.sm.loginOrRecoverUserWithMnemonic(DEMO_SUPERADMIN_MNEMONIC); }catch(e){ toast('SUPERADMIN', e.message||'Could not start the engine'); } };
 }
 
 function netSend(){
@@ -1922,7 +2123,7 @@ function netSend(){
     x: Math.round(player.x), y: Math.round(player.y),
     a: +(inV ? inV.angle : aimAngle()).toFixed(2), // render heading: car direction while driving, aim on foot
     v: inV?1:0, ct: inV?CAR_TYPES.indexOf(inV.type):-1,
-    w: player.weapon, hp: Math.round(player.hp), al: player.alive?1:0, n: MYNAME, r: roleKey, s: Math.round(myScore)
+    w: player.weapon, hp: Math.round(player.hp), al: player.alive?1:0, n: MYNAME, r: roleKey, s: Math.round(myScore), ad: AUTH.address
   });
   for(const id in NET.players){ if(now-(NET.players[id].last||0)>3500) delete NET.players[id]; }
   updateNetTag();
@@ -1980,8 +2181,8 @@ function renderPeerPanel(){ // right-side list of connected players (self + peer
   const panel = document.getElementById('peerPanel');
   if(!panel) return;
   if(!NET.ready || !running){ panel.innerHTML=''; return; }
-  const rows = [{ name:MYNAME, color:city.accent, v:player.inVehicle?1:0, hp:Math.round(player.hp), al:player.alive?1:0, role:roleKey, score:Math.round(myScore), self:true }];
-  for(const id in NET.players){ const p=NET.players[id]; rows.push({ name:p.name||id.slice(0,4), color:p.color, v:p.v, hp:p.hp, al:p.al, role:p.role, score:p.score||0 }); }
+  const rows = [{ name:MYNAME, color:city.accent, v:player.inVehicle?1:0, hp:Math.round(player.hp), al:player.alive?1:0, role:roleKey, score:Math.round(myScore), rank:(AUTH.ok?RANKS[myRank]:null), self:true }];
+  for(const id in NET.players){ const p=NET.players[id]; rows.push({ name:p.name||id.slice(0,4), color:p.color, v:p.v, hp:p.hp, al:p.al, role:p.role, score:p.score||0, rank:rankOf(p.addr) }); }
   rows.sort((a,b)=>(b.score||0)-(a.score||0)); // leaderboard order
   panel.innerHTML='';
   const title=document.createElement('div'); title.className='peerTitle'; title.textContent='LEADERBOARD · '+rows.length;
@@ -1991,9 +2192,10 @@ function renderPeerPanel(){ // right-side list of connected players (self + peer
     const dot=document.createElement('span'); dot.className='peerDot'; dot.style.background=r.color;
     const em=(r.role && ROLES[r.role]) ? ROLES[r.role].emoji : (r.v?'🚗':'🚶');
     const nm=document.createElement('span'); nm.className='peerName'; nm.textContent=em+' '+r.name;
+    const rk=document.createElement('span'); rk.className='peerRank'; if(r.rank) rk.textContent=r.rank;
     const hp=document.createElement('span'); hp.className='peerHp'; hp.textContent=(r.al===0?'💀':(r.hp!=null?r.hp:'–'));
     const kl=document.createElement('span'); kl.className='peerKills'; kl.textContent=r.score||0;
-    row.append(dot,nm,hp,kl); panel.appendChild(row);
+    row.append(dot,nm,rk,hp,kl); panel.appendChild(row);
   }
 }
 
@@ -2014,6 +2216,11 @@ resize();
 genCity(cityKey);
 document.getElementById('playerName').value = MYNAME;
 document.querySelectorAll('.roleBtn').forEach(b=>b.classList.toggle('sel', b.dataset.role===roleKey));
+document.getElementById('cityName').textContent = city.label;
+document.querySelectorAll('.cityBtn').forEach(b=>b.classList.toggle('sel', b.dataset.city===cityKey));
+wireLogin();
+document.getElementById('btnModeSolo').onclick = ()=>{ gameMode='solo'; document.getElementById('modeOverlay').classList.add('hidden'); }; // classic, no login
+document.getElementById('btnModeMp').onclick = ()=>{ gameMode='mp'; document.getElementById('modeOverlay').classList.add('hidden'); document.getElementById('loginOverlay').classList.remove('hidden'); bootAuth(); }; // sign-in + P2P
 
 })();
 </script>
